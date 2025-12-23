@@ -345,17 +345,13 @@ def load_data():
     scope = ['https://spreadsheets.google.com/feeds',
              'https://www.googleapis.com/auth/drive']
     
-    # 방법 1: JSON 키 파일 사용
-    creds = Credentials.from_service_account_file('your-credentials.json', scopes=scope)
-    
-    # 방법 2: Streamlit Secrets 사용 (배포 시 권장)
-    # creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
+    # Streamlit Secrets 사용
+    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
     
     client = gspread.authorize(creds)
     
-    # 스프레드시트 열기 (URL 또는 시트 이름 사용)
-    spreadsheet = client.open_by_url('YOUR_GOOGLE_SHEET_URL')
-    # 또는: spreadsheet = client.open('스프레드시트 이름')
+    # 스프레드시트 열기
+    spreadsheet = client.open_by_url('https://docs.google.com/spreadsheets/d/1_jO1uKWh6ZPZ_uoQ4dE1e5ouc8MYQnnVL8xBvJNqdTc/edit?gid=0#gid=0')
     
     # WRAP 시트 데이터 읽기
     worksheet = spreadsheet.worksheet("WRAP")
