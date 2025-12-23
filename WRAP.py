@@ -1,8 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
-import gspread
-from google.oauth2.service_account import Credentials
+from streamlit_gsheets import GSheetsConnection
 from datetime import datetime, timedelta
 from collections import defaultdict
 
@@ -341,27 +340,17 @@ st.markdown("""
 # 구글스프레드 읽기
 @st.cache_data
 def load_data():
-    # Google Sheets 인증 설정
-    scope = ['https://spreadsheets.google.com/feeds',
-             'https://www.googleapis.com/auth/drive']
-    
-    # Streamlit Secrets 사용
-    creds = Credentials.from_service_account_info(st.secrets["gcp_service_account"], scopes=scope)
-    
-    client = gspread.authorize(creds)
-    
-    # 스프레드시트 열기
-    spreadsheet = client.open_by_url('https://docs.google.com/spreadsheets/d/1_jO1uKWh6ZPZ_uoQ4dE1e5ouc8MYQnnVL8xBvJNqdTc/edit?gid=0#gid=0')
+    # Google Sheets 연결
+    conn = st.connection("gsheets", type=GSheetsConnection)
     
     # WRAP 시트 데이터 읽기
-    worksheet = spreadsheet.worksheet("WRAP")
-    data = worksheet.get_all_records()
-    df = pd.DataFrame(data)
+    df = conn.read(worksheet="WRAP")
     df['거래일'] = pd.to_datetime(df['거래일'])
     
     # 투자금액 읽기 (M1 셀)
-    investment_amount = worksheet.acell('M1').value
-    investment_amount = float(investment_amount) if investment_amount else 0
+    # GSheetsConnection으로 특정 셀 읽기
+    investment_df = conn.read(worksheet="WRAP", usecols=[12], nrows=1, header=None)  # M열은 12번째 (0-based)
+    investment_amount = float(investment_df.iloc[0, 0]) if not investment_df.empty else 0
     
     return df.sort_values('거래일'), investment_amount
 
