@@ -11,10 +11,7 @@ st.set_page_config(page_title="랩 거래일별 현황", layout="centered")
 # CSS 스타일링
 st.markdown("""
 <style>
-    html {
-        zoom: 0.9;
-    }
-    
+            
     /* 폰트 import */
     @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css');
     
