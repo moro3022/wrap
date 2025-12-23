@@ -24,6 +24,7 @@ st.markdown("""
     .block-container {
         max-width: 1200px;
         padding: 2rem 1rem;
+        zoom: 0.9;
     }
     
     /* 타이틀 */
