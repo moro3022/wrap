@@ -749,7 +749,7 @@ try:
                     # 배당과 매도 구분 처리
                     if trade.get('type') == 'dividend':
                         html_content += f'<td class="text-center">{trade["qty"]}</td>'  # 수량
-                        html_content += '<td class="text-right">-</td>'  # 평균단가
+                        html_content += '<td class="text-right">배당</td>'  # 평균단가
                         html_content += f'<td class="text-right">${trade["dividend_price"]:.2f}</td>'  # 배당단가
                     else:
                         html_content += f'<td class="text-center">{trade["qty"]}</td>'
