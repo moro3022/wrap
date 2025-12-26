@@ -149,7 +149,7 @@ st.markdown("""
     }
     
     .pl-negative {
-        color: #dc2626 !important;
+        color: #C54E4A !important;
         font-weight: 700 !important;
     }
     
@@ -588,7 +588,7 @@ try:
         latest_total_pl = snapshots[-1]['total_pl']  # 가장 최근(오늘) 총손익
         current_value = investment_amount + latest_total_pl
         total_return_rate = (latest_total_pl / investment_amount * 100) if investment_amount > 0 else 0
-        return_color = '#3A866A' if total_return_rate >= 0 else '#dc2626'
+        return_color = '#3A866A' if total_return_rate >= 0 else '#C54E4A'
         
         st.markdown(f"""
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 2rem; margin-bottom: 2rem;">
@@ -710,7 +710,7 @@ try:
             <h3 style="margin: 0; font-size: 1.5rem; font-weight: 700; color: #1f2937; margin-left: 30px;">실현손익 내역</h3>
             <div style="text-align: right;">
                 <div style="font-size: 0.95rem; color: #64748b; margin-bottom: 0.25rem; margin-right: 30px;">누적 실현손익</div>
-                <div style="font-size: 1.5rem; font-weight: 700; margin-right: 30px; color: {'#3A866A' if total_realized_pl >= 0 else '#dc2626'};">${total_realized_pl:,.2f}</div>
+                <div style="font-size: 1.5rem; font-weight: 700; margin-right: 30px; color: {'#3A866A' if total_realized_pl >= 0 else '#C54E4A'};">${total_realized_pl:,.2f}</div>
             </div>
         </div>
         """, unsafe_allow_html=True)
