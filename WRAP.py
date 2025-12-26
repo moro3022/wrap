@@ -888,6 +888,7 @@ try:
                 if out_tickers:
                     for item in out_tickers:
                         pl_class = 'profit-positive' if item['realized_pl'] >= 0 else 'profit-negative'
+                        return_class = 'profit-positive' if item['return_rate'] >= 0 else 'profit-negative'
                         html_content += '<div class="out-item">'
                         html_content += f'<div class="out-header">{item["ticker"]}</div>'
                         html_content += '<div class="out-details">'
