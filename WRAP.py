@@ -752,7 +752,7 @@ try:
                     # 배당과 매도 구분 처리
                     if trade.get('type') == 'dividend':
                         html_content += f'<td class="text-center">{int(trade["qty"])}</td>'
-                        html_content += '<td class="text-right">배당</td>'
+                        html_content += '<td class="text-center">배당</td>'
                         html_content += f'<td class="text-right">${trade["dividend_price"]:.2f}</td>'
                         html_content += f'<td class="text-right {pl_class}">${trade["realized_pl"]:,.2f}</td>'
                         html_content += '<td class="text-right">-</td>'
@@ -811,25 +811,35 @@ try:
                     # 신규 종목
                     if holding['is_new']:
                         monthly_data[month_key]['new_tickers'].append(holding['ticker'])
-                    
+
                     # 매도 종목
                     if holding.get('is_out', False):
                         first_buy = holding.get('first_buy_date', snapshot['date'])
                         out_date = holding.get('out_date', snapshot['date'])
                         holding_days = (out_date - first_buy).days
                         
-                        # 해당 종목의 실현손익 합산
-                        ticker_realized_pl = sum(
-                            t['realized_pl'] 
-                            for t in realized_trades 
-                            if t['ticker'] == holding['ticker'] 
-                            and t['date'].strftime('%Y-%m') == month_key
-                        )
+                        # 해당 종목의 실현손익과 매도 정보 합산
+                        ticker_realized_pl = 0
+                        ticker_total_cost = 0
+                        ticker_total_proceeds = 0
+                        
+                        for t in realized_trades:
+                            if t['ticker'] == holding['ticker'] and t['date'].strftime('%Y-%m') == month_key:
+                                ticker_realized_pl += t['realized_pl']
+                                if t.get('type') != 'dividend':  # 배당 제외
+                                    cost_basis = t['avg_cost'] * t['qty']
+                                    proceeds = t['sell_price'] * t['qty']
+                                    ticker_total_cost += cost_basis
+                                    ticker_total_proceeds += proceeds
+                        
+                        # 수익률 계산
+                        ticker_return_rate = ((ticker_total_proceeds - ticker_total_cost) / ticker_total_cost * 100) if ticker_total_cost > 0 else 0
                         
                         monthly_data[month_key]['out_tickers'].append({
                             'ticker': holding['ticker'],
                             'holding_days': holding_days,
-                            'realized_pl': ticker_realized_pl
+                            'realized_pl': ticker_realized_pl,
+                            'return_rate': ticker_return_rate
                         })
             
             # 월별 역순 정렬
@@ -888,6 +898,10 @@ try:
                         html_content += '<div class="detail-item">'
                         html_content += '<span class="detail-label">손익:</span>'
                         html_content += f'<span class="detail-value {pl_class}">${item["realized_pl"]:,.2f}</span>'
+                        html_content += '</div>'
+                        html_content += '<div class="detail-item">'
+                        html_content += '<span class="detail-label">수익률:</span>'
+                        html_content += f'<span class="detail-value {return_class}">{item["return_rate"]:.2f}%</span>'
                         html_content += '</div>'
                         html_content += '</div>'  # out-details 끝
                         html_content += '</div>'  # out-item 끝
