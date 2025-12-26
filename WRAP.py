@@ -204,18 +204,13 @@ st.markdown("""
         user-select: none;
     }
 
-    /* 접힌 상태의 헤더 색상 (연하게) */
-    .date-card input[type="checkbox"]:not(:checked) ~ .date-header {
+    /* 과거 날짜 카드의 헤더 색상 (연하게) */
+    .date-card.past-date .date-header {
         background: #5a6b85;
     }
 
-    .date-card input[type="checkbox"]:not(:checked) ~ .date-header:hover {
+    .date-card.past-date .date-header:hover {
         background: #4a5b75 !important;
-    }
-
-    /* 펼쳐진 상태의 호버 */
-    .date-card input[type="checkbox"]:checked ~ .date-header:hover {
-        background: #1e3a5f !important;
     }
 
     .collapsible-content {
@@ -677,7 +672,7 @@ try:
             
             # 날짜 카드 시작
             html_content = f"""
-            <div class="date-card">
+            <div class="date-card {'past-date' if not is_today else ''}">
                 <input type="checkbox" id="toggle-{idx}" {'checked' if is_today else ''}>
                 <label for="toggle-{idx}" class="date-header collapsible-header">
                     <div class="date-title">{date_str} <span class="chevron">▼</span></div>
