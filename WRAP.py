@@ -324,7 +324,7 @@ st.markdown("""
     }
 
     .profit-negative {
-        color: #dc2626 !important;
+        color: #C54E4A !important;
         font-weight: 700 !important;
     }
 
