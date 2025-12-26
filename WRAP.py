@@ -57,7 +57,7 @@ st.markdown("""
     }
     
     .date-title {
-        font-size: 1.5rem;
+        font-size: 1.8rem;
         font-weight: 700;
         color: white;
     }
