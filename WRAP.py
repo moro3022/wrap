@@ -752,8 +752,8 @@ try:
                         html_content += f'<td class="text-center">{int(trade["qty"])}</td>'  # 정수 변환
                         html_content += '<td class="text-right">배당</td>'
                         html_content += f'<td class="text-right">${trade["dividend_price"]:.2f}</td>'
-                        html_content += f'<td class="text-right {pl_class}">${trade["realized_pl"]:,.2f}</td>'
-                        html_content += '<td class="text-right">-</td>'  # 배당은 수익률 없음
+                        html_content += f'<td class="text-right {pl_class}">${trade["realized_pl"]:,.2f}</td>'  # 실현손익
+                        html_content += '<td class="text-right">-</td>'  # 수익률 (배당은 없음)
                     else:
                         return_rate = ((trade["sell_price"] - trade["avg_cost"]) / trade["avg_cost"] * 100) if trade["avg_cost"] > 0 else 0
                         return_class = 'pl-positive' if return_rate >= 0 else 'pl-negative'
@@ -761,8 +761,8 @@ try:
                         html_content += f'<td class="text-center">{int(trade["qty"])}</td>'  # 정수 변환
                         html_content += f'<td class="text-right">${trade["avg_cost"]:.2f}</td>'
                         html_content += f'<td class="text-right">${trade["sell_price"]:.2f}</td>'
-                        html_content += f'<td class="text-right {pl_class}">${trade["realized_pl"]:,.2f}</td>'
-                        html_content += f'<td class="text-right {return_class}">{return_rate:.2f}%</td>'  # 수익률 추가
+                        html_content += f'<td class="text-right {pl_class}">${trade["realized_pl"]:,.2f}</td>'  # 실현손익
+                        html_content += f'<td class="text-right {return_class}">{return_rate:.2f}%</td>'  # 수익률
                     
                     html_content += '</tr>'
                     
