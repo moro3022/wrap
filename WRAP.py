@@ -192,6 +192,39 @@ st.markdown("""
         color: #64748b;
         font-size: 1.1rem;
     }
+            
+    /* 접이식 카드 추가 */
+    .collapsible-header {
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .collapsible-header:hover {
+        background: #1e3a5f !important;
+    }
+
+    .collapsible-content {
+        max-height: 0;
+        overflow: hidden;
+        transition: max-height 0.3s ease-out;
+    }
+
+    .collapsible-content.active {
+        max-height: 5000px;
+        transition: max-height 0.5s ease-in;
+    }
+
+    .chevron {
+        display: inline-block;
+        transition: transform 0.3s;
+        margin-left: 10px;
+        font-size: 0.8em;
+    }
+
+    .chevron.active {
+        transform: rotate(180deg);
+    }
+
     
     /tab3 스타일/
     /* 월별 카드 스타일 */
@@ -337,6 +370,16 @@ st.markdown("""
 
 
 </style>
+            
+<script>
+function toggleContent(header, idx) {
+    const content = document.getElementById('content-' + idx);
+    const chevron = header.querySelector('.chevron');
+    
+    content.classList.toggle('active');
+    chevron.classList.toggle('active');
+}
+</script>
 """, unsafe_allow_html=True)
 
 # 구글스프레드 읽기
@@ -613,9 +656,14 @@ try:
     tab1, tab2, tab3 = st.tabs(["거래일별 현황", "실현손익 내역", "신규/매도 항목"])
 
     with tab1:
+        # 오늘 날짜 기준 2달 전 계산
+        two_months_ago = datetime.now() - timedelta(days=60)
+        # 최근 2달치만 필터링
+        recent_snapshots = [s for s in snapshots if s['date'] >= two_months_ago]
     
         # 결과 표시
-        for snapshot in reversed(snapshots):
+        for idx, snapshot in enumerate(reversed(recent_snapshots)):
+            is_today = idx == 0  # 첫 번째가 오늘
             date_str = snapshot['date'].strftime('%Y-%m-%d')
             daily_pl = snapshot['daily_realized_pl']
             cumul_pl = snapshot['cumulative_realized_pl']
@@ -625,9 +673,13 @@ try:
             # 날짜 카드 시작
             html_content = f"""
             <div class="date-card">
-                <div class="date-header">
-                    <div class="date-title">{date_str}</div>
+                <div class="date-header collapsible-header" onclick="toggleContent(this, {idx})">
+                    <div class="date-title">{date_str} <span class="chevron {'active' if is_today else ''}">▼</span></div>
                     <div class="header-metrics">
+                        <div class="header-metric">
+                            <div class="header-metric-label">평가손익</div>
+                            <div class="header-metric-value">${unrealized_pl:,.2f}</div>
+                        </div>
                         <div class="header-metric">
                             <div class="header-metric-label">당일 실현손익</div>
                             <div class="header-metric-value">${daily_pl:,.2f}</div>
@@ -642,6 +694,7 @@ try:
                         </div>
                     </div>
                 </div>
+                <div class="collapsible-content {'active' if is_today else ''}" id="content-{idx}">
             """
             
             if snapshot['holdings']:
@@ -695,7 +748,7 @@ try:
             else:
                 html_content += '<div class="empty-state">💡 보유 종목 없음</div>'
             
-            html_content += '</div>'
+            html_content += '</div></div>'  # collapsible-content와 date-card 닫기
             
             st.markdown(html_content, unsafe_allow_html=True)
 
