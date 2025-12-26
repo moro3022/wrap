@@ -749,20 +749,21 @@ try:
                     html_content += f'<td class="text-center font-bold">{trade["ticker"]}</td>'
                     # 배당과 매도 구분 처리
                     if trade.get('type') == 'dividend':
-                        html_content += f'<td class="text-center">{int(trade["qty"])}</td>'  # 수량
-                        html_content += '<td class="text-center">배당</td>'  # 평균단가
-                        html_content += f'<td class="text-right">${trade["dividend_price"]:.2f}</td>'  # 배당단가
-                        html_content += '<td class="text-center">-</td>'
+                        html_content += f'<td class="text-center">{int(trade["qty"])}</td>'  # 정수 변환
+                        html_content += '<td class="text-right">배당</td>'
+                        html_content += f'<td class="text-right">${trade["dividend_price"]:.2f}</td>'
+                        html_content += f'<td class="text-right {pl_class}">${trade["realized_pl"]:,.2f}</td>'
+                        html_content += '<td class="text-right">-</td>'  # 배당은 수익률 없음
                     else:
                         return_rate = ((trade["sell_price"] - trade["avg_cost"]) / trade["avg_cost"] * 100) if trade["avg_cost"] > 0 else 0
                         return_class = 'pl-positive' if return_rate >= 0 else 'pl-negative'
-
-                        html_content += f'<td class="text-center">{int(trade["qty"])}</td>'
+                        
+                        html_content += f'<td class="text-center">{int(trade["qty"])}</td>'  # 정수 변환
                         html_content += f'<td class="text-right">${trade["avg_cost"]:.2f}</td>'
                         html_content += f'<td class="text-right">${trade["sell_price"]:.2f}</td>'
-                        html_content += f'<td class="text-right {return_class}">{return_rate:.2f}%</td>'
+                        html_content += f'<td class="text-right {pl_class}">${trade["realized_pl"]:,.2f}</td>'
+                        html_content += f'<td class="text-right {return_class}">{return_rate:.2f}%</td>'  # 수익률 추가
                     
-                    html_content += f'<td class="text-right {pl_class}">${trade["realized_pl"]:,.2f}</td>'
                     html_content += '</tr>'
                     
                     month_pl += trade['realized_pl']
@@ -771,7 +772,7 @@ try:
                 month_pl_class = 'pl-positive' if month_pl >= 0 else 'pl-negative'
                 year, month = month_key.split('-')
                 html_content += '<tr class="total-row" style="background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);">'
-                html_content += f'<td colspan="6" class="text-right" style="font-size: 1.05rem;">{year}년 {month}월 실현손익</td>'
+                html_content += f'<td colspan="6" class="text-right" style="font-size: 1.05rem;">{year}년 {month}월 실현손익</td>'  # colspan 5->6으로 변경
                 html_content += f'<td class="text-right {month_pl_class}" style="font-size: 1.05rem;">${month_pl:,.2f}</td>'
                 html_content += '</tr>'
             
