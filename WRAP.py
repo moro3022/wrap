@@ -193,10 +193,15 @@ st.markdown("""
         font-size: 1.1rem;
     }
             
-    /* 접이식 카드 추가 */
+    /* 접이식 카드 - CSS only */
+    .date-card input[type="checkbox"] {
+        display: none;
+    }
+    
     .collapsible-header {
         cursor: pointer;
         transition: background 0.2s;
+        user-select: none;
     }
 
     .collapsible-header:hover {
@@ -209,7 +214,7 @@ st.markdown("""
         transition: max-height 0.3s ease-out;
     }
 
-    .collapsible-content.active {
+    .date-card input[type="checkbox"]:checked ~ .collapsible-content {
         max-height: 5000px;
         transition: max-height 0.5s ease-in;
     }
@@ -221,10 +226,9 @@ st.markdown("""
         font-size: 0.8em;
     }
 
-    .chevron.active {
+    .date-card input[type="checkbox"]:checked ~ .collapsible-header .chevron {
         transform: rotate(180deg);
     }
-
     
     /tab3 스타일/
     /* 월별 카드 스타일 */
@@ -370,16 +374,6 @@ st.markdown("""
 
 
 </style>
-            
-<script>
-function toggleContent(header, idx) {
-    const content = document.getElementById('content-' + idx);
-    const chevron = header.querySelector('.chevron');
-    
-    content.classList.toggle('active');
-    chevron.classList.toggle('active');
-}
-</script>
 """, unsafe_allow_html=True)
 
 # 구글스프레드 읽기
@@ -658,9 +652,10 @@ try:
     with tab1:
         # 오늘 날짜 기준 2달 전 계산
         two_months_ago = datetime.now() - timedelta(days=60)
+        
         # 최근 2달치만 필터링
         recent_snapshots = [s for s in snapshots if s['date'] >= two_months_ago]
-    
+        
         # 결과 표시
         for idx, snapshot in enumerate(reversed(recent_snapshots)):
             is_today = idx == 0  # 첫 번째가 오늘
@@ -673,8 +668,9 @@ try:
             # 날짜 카드 시작
             html_content = f"""
             <div class="date-card">
-                <div class="date-header collapsible-header" onclick="toggleContent(this, {idx})">
-                    <div class="date-title">{date_str} <span class="chevron {'active' if is_today else ''}">▼</span></div>
+                <input type="checkbox" id="toggle-{idx}" {'checked' if is_today else ''}>
+                <label for="toggle-{idx}" class="date-header collapsible-header">
+                    <div class="date-title">{date_str} <span class="chevron">▼</span></div>
                     <div class="header-metrics">
                         <div class="header-metric">
                             <div class="header-metric-label">평가손익</div>
@@ -693,8 +689,8 @@ try:
                             <div class="header-metric-value">${total_pl:,.2f}</div>
                         </div>
                     </div>
-                </div>
-                <div class="collapsible-content {'active' if is_today else ''}" id="content-{idx}">
+                </label>
+                <div class="collapsible-content">
             """
             
             if snapshot['holdings']:
