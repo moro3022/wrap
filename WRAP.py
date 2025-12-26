@@ -772,7 +772,7 @@ try:
                 month_pl_class = 'pl-positive' if month_pl >= 0 else 'pl-negative'
                 year, month = month_key.split('-')
                 html_content += '<tr class="total-row" style="background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);">'
-                html_content += f'<td colspan="6" class="text-right" style="font-size: 1.05rem;">{year}년 {month}월 실현손익</td>'  # colspan 5->6으로 변경
+                html_content += f'<td colspan="5" class="text-right" style="font-size: 1.05rem;">{year}년 {month}월 실현손익</td>'  # colspan 5->6으로 변경
                 html_content += f'<td class="text-right {month_pl_class}" style="font-size: 1.05rem;">${month_pl:,.2f}</td>'
                 html_content += '</tr>'
             
