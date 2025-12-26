@@ -241,7 +241,7 @@ st.markdown("""
     }
 
     .out-title {
-        color: #dc2626;
+        color: #C54E4A;
     }
 
     .count-badge {
