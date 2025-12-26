@@ -204,8 +204,18 @@ st.markdown("""
         user-select: none;
     }
 
-    .collapsible-header:hover {
-        background: #7D95B5 !important;
+    /* 접힌 상태의 헤더 색상 (연하게) */
+    .date-card input[type="checkbox"]:not(:checked) ~ .date-header {
+        background: #5a6b85;
+    }
+
+    .date-card input[type="checkbox"]:not(:checked) ~ .date-header:hover {
+        background: #4a5b75 !important;
+    }
+
+    /* 펼쳐진 상태의 호버 */
+    .date-card input[type="checkbox"]:checked ~ .date-header:hover {
+        background: #1e3a5f !important;
     }
 
     .collapsible-content {
