@@ -205,7 +205,7 @@ st.markdown("""
     }
 
     .collapsible-header:hover {
-        background: #1e3a5f !important;
+        background: #7D95B5 !important;
     }
 
     .collapsible-content {
