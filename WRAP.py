@@ -57,7 +57,7 @@ st.markdown("""
     }
     
     .date-title {
-        font-size: 1.5rem;
+        font-size: 1.6rem;
         font-weight: 700;
         color: white;
     }
@@ -1037,5 +1037,4 @@ except FileNotFoundError:
     st.error("❌ 엑셀 파일을 찾을 수 없습니다. 경로를 확인해주세요.")
 except Exception as e:
     st.error(f"❌ 오류 발생: {str(e)}")
-
     st.exception(e)
