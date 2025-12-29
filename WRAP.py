@@ -425,33 +425,37 @@ def get_weekly_end_dates(transactions):
     if not len(trade_dates):
         return []
     
-    # 첫 거래일부터 오늘까지
-    start_date = trade_dates[0]
-    end_date = datetime.now()
-    
+    # 거래일을 주차별로 그룹화
     weekly_dates = []
-    current_week_start = start_date - timedelta(days=start_date.weekday())  # 월요일로
+    seen_weeks = set()
     
-    while current_week_start <= end_date:
-        # 해당 주의 금요일
-        friday = current_week_start + timedelta(days=4)
+    for trade_date in trade_dates:
+        # ISO 주차 (년도, 주차, 요일)
+        iso_year, iso_week, _ = trade_date.isocalendar()
+        week_key = (iso_year, iso_week)
         
-        # 금요일이 주말이면 목요일로 (실제로는 금요일이 주말일 수 없지만 안전장치)
-        while is_weekend(friday) and friday >= current_week_start:
-            friday -= timedelta(days=1)
-        
-        # 해당 주에 거래가 있었거나, 최근 2주 이내면 포함
-        week_end = current_week_start + timedelta(days=6)
-        has_trade_in_week = any(current_week_start <= td <= week_end for td in trade_dates)
-        is_recent = friday.date() >= (datetime.now() - timedelta(days=14)).date()
-        
-        if has_trade_in_week or is_recent:
+        if week_key not in seen_weeks:
+            seen_weeks.add(week_key)
+            
+            # 해당 주의 금요일 계산
+            # 월요일 찾기
+            monday = trade_date - timedelta(days=trade_date.weekday())
+            # 금요일
+            friday = monday + timedelta(days=4)
+            
             weekly_dates.append(friday)
-        
-        # 다음 주로
-        current_week_start += timedelta(days=7)
     
-    return weekly_dates
+    # 현재 주도 추가 (거래가 없어도)
+    today = datetime.now()
+    iso_year, iso_week, _ = today.isocalendar()
+    current_week_key = (iso_year, iso_week)
+    
+    if current_week_key not in seen_weeks:
+        monday = today - timedelta(days=today.weekday())
+        friday = monday + timedelta(days=4)
+        weekly_dates.append(friday)
+    
+    return sorted(weekly_dates)
 
 # 선입선출 방식으로 매매손익 계산 (주간 기준)
 def calculate_fifo(transactions, close_prices):
@@ -465,11 +469,11 @@ def calculate_fifo(transactions, close_prices):
     weekly_end_dates = get_weekly_end_dates(transactions)
     
     for week_idx, week_end_date in enumerate(weekly_end_dates):
-        # 해당 주의 시작일
-        week_start_date = week_end_date - timedelta(days=6)
+        # 해당 주의 월요일
+        monday = week_end_date - timedelta(days=4)
         
         # 해당 주의 거래만 필터링
-        week_txs = transactions[(transactions['거래일'] > week_start_date) & 
+        week_txs = transactions[(transactions['거래일'] >= monday) & 
                                 (transactions['거래일'] <= week_end_date)]
         
         weekly_realized_pl = 0
