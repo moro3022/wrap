@@ -707,9 +707,9 @@ try:
 
             # 현재 주인 경우 실제 날짜 표시
             if is_current_week:
-                date_str = f"{year % 100}년 {month}월 {week_of_month}주차 ({snapshot['date'].strftime('%m/%d')}) - 현재"
+                date_str = f"{snapshot['date'].strftime('%y')}년 {month}월 {week_of_month}주차 ({snapshot['date'].strftime('%m/%d')}) - 현재"
             else:
-                date_str = f"{year % 100}년 {month}월 {week_of_month}주차 ({snapshot['date'].strftime('%m/%d')})"
+                date_str = f"{snapshot['date'].strftime('%y')}월 {week_of_month}주차 ({snapshot['date'].strftime('%m/%d')})"
             
             weekly_pl = snapshot['weekly_realized_pl']
             cumul_pl = snapshot['cumulative_realized_pl']
