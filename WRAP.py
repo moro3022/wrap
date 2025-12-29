@@ -719,7 +719,7 @@ try:
             # 날짜 카드 시작
             html_content = f"""
             <div class="date-card {'past-date' if not is_current_week else ''}">
-                <input type="checkbox" id="toggle-{idx}" checked>
+                <input type="checkbox" id="toggle-{idx}">
                 <label for="toggle-{idx}" class="date-header collapsible-header">
                     <div class="date-title">{date_str} <span class="chevron">▼</span></div>
                     <div class="header-metrics">
