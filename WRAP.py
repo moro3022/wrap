@@ -651,7 +651,7 @@ try:
             today_holdings.sort(key=lambda x: x['avg_cost'] * x['qty'], reverse=True)
 
             snapshots.append({
-                'date': this_friday,
+                'date': today,
                 'holdings': today_holdings,
                 'weekly_realized_pl': 0,
                 'cumulative_realized_pl': last_snapshot['cumulative_realized_pl'],
@@ -699,12 +699,17 @@ try:
         # 결과 표시
         for idx, snapshot in enumerate(reversed(recent_snapshots)):
             is_current_week = idx == 0
-            
+
             # 주차 표시
             year = snapshot['date'].year
             month = snapshot['date'].month
             week_of_month = (snapshot['date'].day - 1) // 7 + 1
-            date_str = f"{year}년 {month}월 {week_of_month}주차 ({snapshot['date'].strftime('%m/%d')})"
+
+            # 현재 주인 경우 실제 날짜 표시
+            if is_current_week:
+                date_str = f"{year % 100}년 {month}월 {week_of_month}주차 ({snapshot['date'].strftime('%m/%d')}) - 현재"
+            else:
+                date_str = f"{year % 100}년 {month}월 {week_of_month}주차 ({snapshot['date'].strftime('%m/%d')})"
             
             weekly_pl = snapshot['weekly_realized_pl']
             cumul_pl = snapshot['cumulative_realized_pl']
