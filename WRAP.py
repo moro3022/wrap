@@ -432,15 +432,38 @@ def calculate_fifo_weekly(transactions, close_prices):
             weeks[week_key] = []
         weeks[week_key].append(date)
     
+    # 마지막 거래일과 오늘 사이의 주차도 추가
+    if all_trade_dates:
+        last_trade_date = all_trade_dates[-1]
+        today = datetime.now()
+        
+        # 마지막 거래일부터 오늘까지의 주차 생성
+        current_date = last_trade_date + timedelta(days=7)
+        while current_date < today:
+            iso_year, iso_week, _ = current_date.isocalendar()
+            week_key = (iso_year, iso_week)
+            if week_key not in weeks:
+                weeks[week_key] = []
+            current_date += timedelta(days=7)
+    
     # 각 주의 마지막 날짜 찾기 (금요일 기준)
     weekly_snapshots = []
     sorted_weeks = sorted(weeks.keys())
     
     for week_idx, week_key in enumerate(sorted_weeks):
-        week_dates = weeks[week_key]
+        week_dates = weeks[week_key] if weeks[week_key] else []
         
         # 해당 주의 금요일 계산
-        first_date_of_week = min(week_dates)
+        if week_dates:
+            first_date_of_week = min(week_dates)
+        else:
+            # 거래가 없는 주: week_key로부터 금요일 계산
+            iso_year, iso_week = week_key
+            # ISO week의 월요일 찾기
+            jan_4 = datetime(iso_year, 1, 4)
+            week_one_monday = jan_4 - timedelta(days=jan_4.weekday())
+            first_date_of_week = week_one_monday + timedelta(weeks=iso_week-1)
+        
         monday = first_date_of_week - timedelta(days=first_date_of_week.weekday())
         friday = monday + timedelta(days=4)
         
