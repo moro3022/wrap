@@ -412,31 +412,79 @@ def get_closing_prices(tickers, dates):
             prices[ticker] = {}
     return prices
 
-# 선입선출 방식으로 매매손익 계산
+# 미국 시장 휴일 간단 체크 (주말)
+def is_weekend(date):
+    """주말 여부 확인"""
+    return date.weekday() >= 5
+
+# 주간 마지막 영업일 찾기
+def get_weekly_end_dates(transactions):
+    """거래일 데이터를 기반으로 주간 마지막 영업일 리스트 생성"""
+    trade_dates = sorted(transactions['거래일'].unique())
+    
+    if not len(trade_dates):
+        return []
+    
+    # 첫 거래일부터 오늘까지
+    start_date = trade_dates[0]
+    end_date = datetime.now()
+    
+    weekly_dates = []
+    current_week_start = start_date - timedelta(days=start_date.weekday())  # 월요일로
+    
+    while current_week_start <= end_date:
+        # 해당 주의 금요일
+        friday = current_week_start + timedelta(days=4)
+        
+        # 금요일이 주말이면 목요일로 (실제로는 금요일이 주말일 수 없지만 안전장치)
+        while is_weekend(friday) and friday >= current_week_start:
+            friday -= timedelta(days=1)
+        
+        # 해당 주에 거래가 있었거나, 최근 2주 이내면 포함
+        week_end = current_week_start + timedelta(days=6)
+        has_trade_in_week = any(current_week_start <= td <= week_end for td in trade_dates)
+        is_recent = friday.date() >= (datetime.now() - timedelta(days=14)).date()
+        
+        if has_trade_in_week or is_recent:
+            weekly_dates.append(friday)
+        
+        # 다음 주로
+        current_week_start += timedelta(days=7)
+    
+    return weekly_dates
+
+# 선입선출 방식으로 매매손익 계산 (주간 기준)
 def calculate_fifo(transactions, close_prices):
     holdings = defaultdict(list)
     cumulative_realized_pl = 0
-    daily_snapshots = []
+    weekly_snapshots = []
     realized_trades = [] 
     first_buy_dates = {}
     
-    trade_dates = sorted(transactions['거래일'].unique())
-    prev_tickers = set()
+    # 주간 마지막 영업일 리스트
+    weekly_end_dates = get_weekly_end_dates(transactions)
     
-    for idx, date in enumerate(trade_dates):        
-        day_txs = transactions[transactions['거래일'] == date]
-        daily_realized_pl = 0
+    for week_idx, week_end_date in enumerate(weekly_end_dates):
+        # 해당 주의 시작일
+        week_start_date = week_end_date - timedelta(days=6)
         
-        # 거래 처리
-        for _, tx in day_txs.iterrows():
+        # 해당 주의 거래만 필터링
+        week_txs = transactions[(transactions['거래일'] > week_start_date) & 
+                                (transactions['거래일'] <= week_end_date)]
+        
+        weekly_realized_pl = 0
+        
+        # 주간 거래 처리
+        for _, tx in week_txs.iterrows():
             ticker = tx['종목코드']
             qty = tx['수량']
             price = tx['단가']
             
             if tx['구분'] == '매수':
                 if ticker not in first_buy_dates:
-                    first_buy_dates[ticker] = date
+                    first_buy_dates[ticker] = tx['거래일']
                 holdings[ticker].append({'qty': qty, 'price': price})
+                
             elif tx['구분'] == '매도':
                 remaining_qty = qty
                 cost_basis = 0
@@ -468,11 +516,11 @@ def calculate_fifo(transactions, close_prices):
                 
                 proceeds = sold_qty * price
                 realized_pl = proceeds - cost_basis
-                daily_realized_pl += realized_pl
+                weekly_realized_pl += realized_pl
                 
                 # 매도 기록 저장
                 realized_trades.append({
-                    'date': date,
+                    'date': tx['거래일'],
                     'ticker': ticker,
                     'qty': sold_qty,
                     'avg_cost': avg_purchase_price,
@@ -482,18 +530,23 @@ def calculate_fifo(transactions, close_prices):
 
             elif tx['구분'] == '배당':
                 dividend_amount = tx['거래금액']
-                daily_realized_pl += dividend_amount
+                weekly_realized_pl += dividend_amount
                 
                 realized_trades.append({
-                    'date': date,
+                    'date': tx['거래일'],
                     'ticker': ticker,
                     'type': 'dividend',
                     'qty': int(qty) if pd.notna(qty) else 0,
-                    'dividend_price': price,  # 단가 (배당 단가)
+                    'dividend_price': price,
                     'realized_pl': dividend_amount
                 })
         
-        cumulative_realized_pl += daily_realized_pl
+        cumulative_realized_pl += weekly_realized_pl
+        
+        # 이전 주 보유 종목 (NEW/OUT 판단용)
+        prev_tickers = set()
+        if week_idx > 0:
+            prev_tickers = {h['ticker'] for h in weekly_snapshots[week_idx - 1]['holdings']}
         
         # 현재 보유 종목 현황
         current_holdings = []
@@ -504,12 +557,12 @@ def calculate_fifo(transactions, close_prices):
             if total_qty > 0:
                 avg_cost = sum(lot['qty'] * lot['price'] for lot in lots) / total_qty
                 
-                # 종가 가져오기
+                # 주말 기준 종가 가져오기
                 close_price = None
                 if ticker in close_prices:
                     price_dict = close_prices[ticker]
                     for price_date, price_value in sorted(price_dict.items(), reverse=True):
-                        if price_date.date() <= date.date():
+                        if price_date.date() <= week_end_date.date():
                             close_price = price_value
                             break
                 
@@ -518,6 +571,8 @@ def calculate_fifo(transactions, close_prices):
                 
                 unrealized_pl = (close_price - avg_cost) * total_qty
                 total_unrealized_pl += unrealized_pl
+                
+                # 이전 주와 비교하여 NEW 판단
                 is_new = ticker not in prev_tickers
                 
                 current_holdings.append({
@@ -529,33 +584,31 @@ def calculate_fifo(transactions, close_prices):
                     'return_rate': ((close_price - avg_cost) / avg_cost * 100) if avg_cost > 0 else 0,
                     'is_new': is_new,
                     'is_out': False,
-                    'first_buy_date': first_buy_dates.get(ticker, date)
+                    'first_buy_date': first_buy_dates.get(ticker, week_end_date)
                 })
-        
-        prev_tickers = {h['ticker'] for h in current_holdings}
         
         current_holdings.sort(key=lambda x: x['avg_cost'] * x['qty'], reverse=True)
         
-        daily_snapshots.append({
-            'date': date,
+        weekly_snapshots.append({
+            'date': week_end_date,
             'holdings': current_holdings,
-            'daily_realized_pl': daily_realized_pl,
+            'weekly_realized_pl': weekly_realized_pl,
             'cumulative_realized_pl': cumulative_realized_pl,
             'total_unrealized_pl': total_unrealized_pl,
             'total_pl': cumulative_realized_pl + total_unrealized_pl
         })
-
-    for idx in range(len(daily_snapshots) - 1):
-        current_tickers = {h['ticker'] for h in daily_snapshots[idx]['holdings']}
-        next_tickers = {h['ticker'] for h in daily_snapshots[idx + 1]['holdings']}
+    
+    # OUT 배지 설정 (현재 주에 있었지만 다음 주에 없는 경우)
+    for idx in range(len(weekly_snapshots) - 1):
+        current_tickers = {h['ticker'] for h in weekly_snapshots[idx]['holdings']}
+        next_tickers = {h['ticker'] for h in weekly_snapshots[idx + 1]['holdings']}
         
-        # 현재 보유하지만 다음날 없는 종목 = OUT
-        for holding in daily_snapshots[idx]['holdings']:
+        for holding in weekly_snapshots[idx]['holdings']:
             if holding['ticker'] not in next_tickers:
                 holding['is_out'] = True
-                holding['out_date'] = daily_snapshots[idx]['date']
+                holding['out_date'] = weekly_snapshots[idx]['date']
     
-    return daily_snapshots, realized_trades, first_buy_dates
+    return weekly_snapshots, realized_trades, first_buy_dates
 
 # 데이터 로드
 try:
@@ -569,65 +622,66 @@ try:
     
     snapshots, realized_trades, first_buy_dates = calculate_fifo(df, close_prices)
 
-    # 오늘 날짜 스냅샷 추가
+    # 이번 주 현황 추가 (최신 종가 반영)
     if snapshots:
         last_snapshot = snapshots[-1]
         today = datetime.now()
         
-        # 오늘의 최신 종가 가져오기
-        today_tickers = [h['ticker'] for h in last_snapshot['holdings']]
-        today_prices = {}
+        # 이번 주 금요일 계산
+        days_until_friday = (4 - today.weekday()) % 7
+        this_friday = today + timedelta(days=days_until_friday)
         
-        for ticker in today_tickers:
-            try:
-                stock = yf.Ticker(ticker)
-                # 최근 5일 데이터 가져오기
-                hist = stock.history(period='5d')
-                if not hist.empty:
-                    today_prices[ticker] = hist['Close'].iloc[-1]
-            except:
-                pass
-        
-        # 오늘 날짜로 종가 업데이트
-        today_holdings = []
-        total_unrealized_pl = 0
-        
-        for holding in last_snapshot['holdings']:
-            ticker = holding['ticker']
+        # 마지막 스냅샷이 이번 주가 아니면 이번 주 현황 추가
+        if last_snapshot['date'].date() < (today - timedelta(days=7)).date():
+            # 오늘의 최신 종가 가져오기
+            today_tickers = [h['ticker'] for h in last_snapshot['holdings']]
+            today_prices = {}
             
-            # 오늘 종가 사용, 없으면 마지막 종가 사용
-            close_price = today_prices.get(ticker, holding['close_price'])
+            for ticker in today_tickers:
+                try:
+                    stock = yf.Ticker(ticker)
+                    hist = stock.history(period='5d')
+                    if not hist.empty:
+                        today_prices[ticker] = hist['Close'].iloc[-1]
+                except:
+                    pass
             
-            unrealized_pl = (close_price - holding['avg_cost']) * holding['qty']
-            total_unrealized_pl += unrealized_pl
+            # 이번 주 현황 생성
+            today_holdings = []
+            total_unrealized_pl = 0
             
-            today_holdings.append({
-                'ticker': holding['ticker'],
-                'qty': holding['qty'],
-                'avg_cost': holding['avg_cost'],
-                'close_price': close_price,
-                'unrealized_pl': unrealized_pl,
-                'return_rate': ((close_price - holding['avg_cost']) / holding['avg_cost'] * 100) if holding['avg_cost'] > 0 else 0,
-                'is_new': False,
-                'is_out': False
+            for holding in last_snapshot['holdings']:
+                ticker = holding['ticker']
+                close_price = today_prices.get(ticker, holding['close_price'])
+                
+                unrealized_pl = (close_price - holding['avg_cost']) * holding['qty']
+                total_unrealized_pl += unrealized_pl
+                
+                today_holdings.append({
+                    'ticker': holding['ticker'],
+                    'qty': holding['qty'],
+                    'avg_cost': holding['avg_cost'],
+                    'close_price': close_price,
+                    'unrealized_pl': unrealized_pl,
+                    'return_rate': ((close_price - holding['avg_cost']) / holding['avg_cost'] * 100) if holding['avg_cost'] > 0 else 0,
+                    'is_new': False,
+                    'is_out': False
+                })
+            
+            today_holdings.sort(key=lambda x: x['avg_cost'] * x['qty'], reverse=True)
+
+            snapshots.append({
+                'date': this_friday,
+                'holdings': today_holdings,
+                'weekly_realized_pl': 0,
+                'cumulative_realized_pl': last_snapshot['cumulative_realized_pl'],
+                'total_unrealized_pl': total_unrealized_pl,
+                'total_pl': last_snapshot['cumulative_realized_pl'] + total_unrealized_pl
             })
-        
-        today_holdings.sort(key=lambda x: x['avg_cost'] * x['qty'], reverse=True)
-
-        snapshots.append({
-            'date': today,
-            'holdings': today_holdings,
-            'daily_realized_pl': 0,
-            'cumulative_realized_pl': last_snapshot['cumulative_realized_pl'],
-            'total_unrealized_pl': total_unrealized_pl,
-            'total_pl': last_snapshot['cumulative_realized_pl'] + total_unrealized_pl
-        })
-
 
     # 제목과 투자금액 표시
-
     if snapshots:
-        latest_total_pl = snapshots[-1]['total_pl']  # 가장 최근(오늘) 총손익
+        latest_total_pl = snapshots[-1]['total_pl']
         current_value = investment_amount + latest_total_pl
         total_return_rate = (latest_total_pl / investment_amount * 100) if investment_amount > 0 else 0
         return_color = '#3A866A' if total_return_rate >= 0 else '#C54E4A'
@@ -636,7 +690,7 @@ try:
         <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 2rem; margin-bottom: 2rem;">
             <h1 style="margin: 0; font-size: 2.5rem; font-weight: 700; color: #1f2937; display: flex; align-items: center; gap: 0.75rem;">
                 <img src="https://cdn-icons-png.flaticon.com/128/19006/19006225.png" style="width: 40px; height: 40px; margin-right: 10px;" />
-                 랩 거래일별 현황
+                 랩 주간 현황
             </h1>
             <div style="display: flex; gap: 3rem;">
                 <div style="text-align: right;">
@@ -652,28 +706,32 @@ try:
         </div>
         """, unsafe_allow_html=True)
 
-    tab1, tab2, tab3 = st.tabs(["거래일별 현황", "실현손익 내역", "신규/매도 항목"])
+    tab1, tab2, tab3 = st.tabs(["주간 현황", "실현손익 내역", "신규/매도 항목"])
 
     with tab1:
-        # 오늘 날짜 기준 2달 전 계산
-        two_months_ago = datetime.now() - timedelta(days=60)
-        
         # 최근 2달치만 필터링
+        two_months_ago = datetime.now() - timedelta(days=60)
         recent_snapshots = [s for s in snapshots if s['date'] >= two_months_ago]
         
         # 결과 표시
         for idx, snapshot in enumerate(reversed(recent_snapshots)):
-            is_today = idx == 0  # 첫 번째가 오늘
-            date_str = snapshot['date'].strftime('%Y-%m-%d')
-            daily_pl = snapshot['daily_realized_pl']
+            is_current_week = idx == 0
+            
+            # 주차 표시 (예: 2024년 12월 4주차)
+            year = snapshot['date'].year
+            month = snapshot['date'].month
+            week_of_month = (snapshot['date'].day - 1) // 7 + 1
+            date_str = f"{year}년 {month}월 {week_of_month}주차 ({snapshot['date'].strftime('%m/%d')})"
+            
+            weekly_pl = snapshot['weekly_realized_pl']
             cumul_pl = snapshot['cumulative_realized_pl']
             unrealized_pl = snapshot['total_unrealized_pl']
             total_pl = snapshot['total_pl']
             
             # 날짜 카드 시작
             html_content = f"""
-            <div class="date-card {'past-date' if not is_today else ''}">
-                <input type="checkbox" id="toggle-{idx}" {'checked' if is_today else ''}>
+            <div class="date-card {'past-date' if not is_current_week else ''}">
+                <input type="checkbox" id="toggle-{idx}" {'checked' if is_current_week else ''}>
                 <label for="toggle-{idx}" class="date-header collapsible-header">
                     <div class="date-title">{date_str} <span class="chevron">▼</span></div>
                     <div class="header-metrics">
@@ -682,8 +740,8 @@ try:
                             <div class="header-metric-value">${unrealized_pl:,.2f}</div>
                         </div>
                         <div class="header-metric">
-                            <div class="header-metric-label">당일 실현손익</div>
-                            <div class="header-metric-value">${daily_pl:,.2f}</div>
+                            <div class="header-metric-label">주간 실현손익</div>
+                            <div class="header-metric-value">${weekly_pl:,.2f}</div>
                         </div>
                         <div class="header-metric">
                             <div class="header-metric-label">누적 실현손익</div>
@@ -749,7 +807,7 @@ try:
             else:
                 html_content += '<div class="empty-state">💡 보유 종목 없음</div>'
             
-            html_content += '</div></div>'  # collapsible-content와 date-card 닫기
+            html_content += '</div></div>'
             
             st.markdown(html_content, unsafe_allow_html=True)
 
@@ -848,130 +906,128 @@ try:
             st.markdown('<div class="empty-state">매도 거래 내역이 없습니다.</div>', unsafe_allow_html=True)
 
     with tab3:
+        # 월별 데이터 수집
+        monthly_data = {}
+        
+        for snapshot in snapshots:
+            month_key = snapshot['date'].strftime('%Y-%m')
             
-            # 월별 데이터 수집
-            monthly_data = {}
+            if month_key not in monthly_data:
+                monthly_data[month_key] = {
+                    'new_tickers': [],
+                    'out_tickers': []
+                }
             
-            for snapshot in snapshots:
-                month_key = snapshot['date'].strftime('%Y-%m')
-                
-                if month_key not in monthly_data:
-                    monthly_data[month_key] = {
-                        'new_tickers': [],
-                        'out_tickers': []
-                    }
-                
-                for holding in snapshot['holdings']:
-                    # 신규 종목
-                    if holding['is_new']:
-                        monthly_data[month_key]['new_tickers'].append(holding['ticker'])
+            for holding in snapshot['holdings']:
+                # 신규 종목
+                if holding['is_new']:
+                    monthly_data[month_key]['new_tickers'].append(holding['ticker'])
 
-                    # 매도 종목
-                    if holding.get('is_out', False):
-                        first_buy = holding.get('first_buy_date', snapshot['date'])
-                        out_date = holding.get('out_date', snapshot['date'])
-                        holding_days = (out_date - first_buy).days
-                        
-                        # 해당 종목의 실현손익과 매도 정보 합산
-                        ticker_realized_pl = 0
-                        ticker_total_cost = 0
-                        ticker_total_proceeds = 0
-                        
-                        for t in realized_trades:
-                            if t['ticker'] == holding['ticker'] and t['date'].strftime('%Y-%m') == month_key:
-                                ticker_realized_pl += t['realized_pl']
-                                if t.get('type') != 'dividend':  # 배당 제외
-                                    cost_basis = t['avg_cost'] * t['qty']
-                                    proceeds = t['sell_price'] * t['qty']
-                                    ticker_total_cost += cost_basis
-                                    ticker_total_proceeds += proceeds
-                        
-                        # 수익률 계산
-                        ticker_return_rate = ((ticker_total_proceeds - ticker_total_cost) / ticker_total_cost * 100) if ticker_total_cost > 0 else 0
-                        
-                        monthly_data[month_key]['out_tickers'].append({
-                            'ticker': holding['ticker'],
-                            'holding_days': holding_days,
-                            'realized_pl': ticker_realized_pl,
-                            'return_rate': ticker_return_rate
-                        })
+                # 매도 종목
+                if holding.get('is_out', False):
+                    first_buy = holding.get('first_buy_date', snapshot['date'])
+                    out_date = holding.get('out_date', snapshot['date'])
+                    holding_days = (out_date - first_buy).days
+                    
+                    # 해당 종목의 실현손익과 매도 정보 합산
+                    ticker_realized_pl = 0
+                    ticker_total_cost = 0
+                    ticker_total_proceeds = 0
+                    
+                    for t in realized_trades:
+                        if t['ticker'] == holding['ticker'] and t['date'].strftime('%Y-%m') == month_key:
+                            ticker_realized_pl += t['realized_pl']
+                            if t.get('type') != 'dividend':
+                                cost_basis = t['avg_cost'] * t['qty']
+                                proceeds = t['sell_price'] * t['qty']
+                                ticker_total_cost += cost_basis
+                                ticker_total_proceeds += proceeds
+                    
+                    # 수익률 계산
+                    ticker_return_rate = ((ticker_total_proceeds - ticker_total_cost) / ticker_total_cost * 100) if ticker_total_cost > 0 else 0
+                    
+                    monthly_data[month_key]['out_tickers'].append({
+                        'ticker': holding['ticker'],
+                        'holding_days': holding_days,
+                        'realized_pl': ticker_realized_pl,
+                        'return_rate': ticker_return_rate
+                    })
+        
+        # 월별 역순 정렬
+        sorted_months = sorted(monthly_data.keys(), reverse=True)
+        
+        for month_key in sorted_months:
+            data = monthly_data[month_key]
+            year, month = month_key.split('-')
             
-            # 월별 역순 정렬
-            sorted_months = sorted(monthly_data.keys(), reverse=True)
+            # 중복 제거
+            new_tickers = list(dict.fromkeys(data['new_tickers']))
+            out_tickers_dict = {}
+            for item in data['out_tickers']:
+                ticker = item['ticker']
+                if ticker not in out_tickers_dict:
+                    out_tickers_dict[ticker] = item
+            out_tickers = list(out_tickers_dict.values())
             
-            for month_key in sorted_months:
-                data = monthly_data[month_key]
-                year, month = month_key.split('-')
-                
-                # 중복 제거
-                new_tickers = list(dict.fromkeys(data['new_tickers']))
-                out_tickers_dict = {}
-                for item in data['out_tickers']:
-                    ticker = item['ticker']
-                    if ticker not in out_tickers_dict:
-                        out_tickers_dict[ticker] = item
-                out_tickers = list(out_tickers_dict.values())
-                
-                # === HTML 생성 시작 ===
-                html_content = '<div class="month-card">'
-                html_content += f'<div class="month-header">{year}년 {int(month)}월</div>'
-                html_content += '<div class="month-content">'
-                
-                # 신규 종목 섹션
-                html_content += '<div class="column column-left">'
-                html_content += '<div class="column-title new-title">'
-                html_content += '📈 NEW'
-                html_content += f'<span class="count-badge">{len(new_tickers)}</span>'
-                html_content += '</div>'
-                
-                if new_tickers:
-                    for ticker in new_tickers:
-                        html_content += f'<div class="ticker-item"><span class="ticker-code">{ticker}</span></div>'
-                else:
-                    html_content += '<div class="empty-state">신규 매수한 종목이 없습니다.</div>'
-                
-                html_content += '</div>'  # column-left 끝
-                
-                # 매도 종목 섹션
-                html_content += '<div class="column">'
-                html_content += '<div class="column-title out-title">'
-                html_content += '📉 OUT'
-                html_content += f'<span class="count-badge">{len(out_tickers)}</span>'
-                html_content += '</div>'
-                
-                if out_tickers:
-                    for item in out_tickers:
-                        pl_class = 'profit-positive' if item['realized_pl'] >= 0 else 'profit-negative'
-                        return_class = 'profit-positive' if item['return_rate'] >= 0 else 'profit-negative'
-                        html_content += '<div class="out-item">'
-                        html_content += f'<div class="out-header">{item["ticker"]}</div>'
-                        html_content += '<div class="out-details">'
-                        html_content += '<div class="detail-item">'
-                        html_content += '<span class="detail-label">보유:</span>'
-                        html_content += f'<span class="detail-value">{item["holding_days"]}일</span>'
-                        html_content += '</div>'
-                        html_content += '<div class="detail-item">'
-                        html_content += '<span class="detail-label">손익:</span>'
-                        html_content += f'<span class="detail-value {pl_class}">${item["realized_pl"]:,.2f}</span>'
-                        html_content += '</div>'
-                        html_content += '<div class="detail-item">'
-                        html_content += '<span class="detail-label">수익률:</span>'
-                        html_content += f'<span class="detail-value {return_class}">{item["return_rate"]:.2f}%</span>'
-                        html_content += '</div>'
-                        html_content += '</div>'  # out-details 끝
-                        html_content += '</div>'  # out-item 끝
-                else:
-                    html_content += '<div class="empty-state">매도한 종목이 없습니다.</div>'
-                
-                html_content += '</div>'  # column 끝
-                html_content += '</div>'  # month-content 끝
-                html_content += '</div>'  # month-card 끝
-                
-                st.markdown(html_content, unsafe_allow_html=True)
+            # HTML 생성
+            html_content = '<div class="month-card">'
+            html_content += f'<div class="month-header">{year}년 {int(month)}월</div>'
+            html_content += '<div class="month-content">'
+            
+            # 신규 종목 섹션
+            html_content += '<div class="column column-left">'
+            html_content += '<div class="column-title new-title">'
+            html_content += '📈 NEW'
+            html_content += f'<span class="count-badge">{len(new_tickers)}</span>'
+            html_content += '</div>'
+            
+            if new_tickers:
+                for ticker in new_tickers:
+                    html_content += f'<div class="ticker-item"><span class="ticker-code">{ticker}</span></div>'
+            else:
+                html_content += '<div class="empty-state">신규 매수한 종목이 없습니다.</div>'
+            
+            html_content += '</div>'
+            
+            # 매도 종목 섹션
+            html_content += '<div class="column">'
+            html_content += '<div class="column-title out-title">'
+            html_content += '📉 OUT'
+            html_content += f'<span class="count-badge">{len(out_tickers)}</span>'
+            html_content += '</div>'
+            
+            if out_tickers:
+                for item in out_tickers:
+                    pl_class = 'profit-positive' if item['realized_pl'] >= 0 else 'profit-negative'
+                    return_class = 'profit-positive' if item['return_rate'] >= 0 else 'profit-negative'
+                    html_content += '<div class="out-item">'
+                    html_content += f'<div class="out-header">{item["ticker"]}</div>'
+                    html_content += '<div class="out-details">'
+                    html_content += '<div class="detail-item">'
+                    html_content += '<span class="detail-label">보유:</span>'
+                    html_content += f'<span class="detail-value">{item["holding_days"]}일</span>'
+                    html_content += '</div>'
+                    html_content += '<div class="detail-item">'
+                    html_content += '<span class="detail-label">손익:</span>'
+                    html_content += f'<span class="detail-value {pl_class}">${item["realized_pl"]:,.2f}</span>'
+                    html_content += '</div>'
+                    html_content += '<div class="detail-item">'
+                    html_content += '<span class="detail-label">수익률:</span>'
+                    html_content += f'<span class="detail-value {return_class}">{item["return_rate"]:.2f}%</span>'
+                    html_content += '</div>'
+                    html_content += '</div>'
+                    html_content += '</div>'
+            else:
+                html_content += '<div class="empty-state">매도한 종목이 없습니다.</div>'
+            
+            html_content += '</div>'
+            html_content += '</div>'
+            html_content += '</div>'
+            
+            st.markdown(html_content, unsafe_allow_html=True)
 
 except FileNotFoundError:
     st.error("❌ 엑셀 파일을 찾을 수 없습니다. 경로를 확인해주세요.")
 except Exception as e:
     st.error(f"❌ 오류 발생: {str(e)}")
     st.exception(e)
-
