@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 
 # 페이지 설정
-st.set_page_config(page_title="랩 거래일별 현황", layout="centered")
+st.set_page_config(page_title="랩 주간 현황", layout="centered")
 
 # CSS 스타일링
 st.markdown("""
@@ -392,93 +392,68 @@ def load_data():
     df['거래일'] = pd.to_datetime(df['거래일'])
     
     # 투자금액 읽기 (M1 셀)
-    # GSheetsConnection으로 특정 셀 읽기
-    investment_df = conn.read(worksheet="WRAP", usecols=[12], nrows=1, header=None)  # M열은 12번째 (0-based)
+    investment_df = conn.read(worksheet="WRAP", usecols=[12], nrows=1, header=None)
     investment_amount = float(investment_df.iloc[0, 0]) if not investment_df.empty else 0
     
     return df.sort_values('거래일'), investment_amount
 
 # 종가 데이터 가져오기
 @st.cache_data
-def get_closing_prices(tickers, dates):
+def get_closing_prices(tickers, start_date, end_date):
     prices = {}
     for ticker in tickers:
         try:
             stock = yf.Ticker(ticker)
-            hist = stock.history(start=dates[0] - timedelta(days=5), end=dates[-1] + timedelta(days=1))
+            hist = stock.history(start=start_date - timedelta(days=5), end=end_date + timedelta(days=1))
             prices[ticker] = hist['Close'].to_dict()
         except Exception as e:
             st.warning(f"{ticker} 종가 데이터를 가져올 수 없습니다: {e}")
             prices[ticker] = {}
     return prices
 
-# 미국 시장 휴일 간단 체크 (주말)
-def is_weekend(date):
-    """주말 여부 확인"""
-    return date.weekday() >= 5
-
-# 주간 마지막 영업일 찾기
-def get_weekly_end_dates(transactions):
-    """거래일 데이터를 기반으로 주간 마지막 영업일 리스트 생성"""
-    trade_dates = sorted(transactions['거래일'].unique())
-    
-    if not len(trade_dates):
-        return []
-    
-    # 거래일을 주차별로 그룹화
-    weekly_dates = []
-    seen_weeks = set()
-    
-    for trade_date in trade_dates:
-        # ISO 주차 (년도, 주차, 요일)
-        iso_year, iso_week, _ = trade_date.isocalendar()
-        week_key = (iso_year, iso_week)
-        
-        if week_key not in seen_weeks:
-            seen_weeks.add(week_key)
-            
-            # 해당 주의 금요일 계산
-            # 월요일 찾기
-            monday = trade_date - timedelta(days=trade_date.weekday())
-            # 금요일
-            friday = monday + timedelta(days=4)
-            
-            weekly_dates.append(friday)
-    
-    # 현재 주도 추가 (거래가 없어도)
-    today = datetime.now()
-    iso_year, iso_week, _ = today.isocalendar()
-    current_week_key = (iso_year, iso_week)
-    
-    if current_week_key not in seen_weeks:
-        monday = today - timedelta(days=today.weekday())
-        friday = monday + timedelta(days=4)
-        weekly_dates.append(friday)
-    
-    return sorted(weekly_dates)
-
 # 선입선출 방식으로 매매손익 계산 (주간 기준)
-def calculate_fifo(transactions, close_prices):
+def calculate_fifo_weekly(transactions, close_prices):
+    """모든 거래를 처리하되, 스냅샷은 주간 마지막 영업일에만 생성"""
+    
     holdings = defaultdict(list)
     cumulative_realized_pl = 0
-    weekly_snapshots = []
-    realized_trades = [] 
+    realized_trades = []
     first_buy_dates = {}
     
-    # 주간 마지막 영업일 리스트
-    weekly_end_dates = get_weekly_end_dates(transactions)
+    # 모든 거래일 가져오기
+    all_trade_dates = sorted(transactions['거래일'].unique())
     
-    for week_idx, week_end_date in enumerate(weekly_end_dates):
-        # 해당 주의 월요일
-        monday = week_end_date - timedelta(days=4)
+    # 거래일을 ISO 주차별로 그룹화
+    weeks = {}  # {(year, week): [dates]}
+    for date in all_trade_dates:
+        iso_year, iso_week, _ = date.isocalendar()
+        week_key = (iso_year, iso_week)
+        if week_key not in weeks:
+            weeks[week_key] = []
+        weeks[week_key].append(date)
+    
+    # 각 주의 마지막 날짜 찾기 (금요일 기준)
+    weekly_snapshots = []
+    sorted_weeks = sorted(weeks.keys())
+    
+    for week_idx, week_key in enumerate(sorted_weeks):
+        week_dates = weeks[week_key]
         
-        # 해당 주의 거래만 필터링
-        week_txs = transactions[(transactions['거래일'] >= monday) & 
-                                (transactions['거래일'] <= week_end_date)]
+        # 해당 주의 금요일 계산
+        first_date_of_week = min(week_dates)
+        monday = first_date_of_week - timedelta(days=first_date_of_week.weekday())
+        friday = monday + timedelta(days=4)
+        
+        # 해당 주의 모든 거래 처리
+        week_start = monday
+        week_end = friday
+        
+        week_txs = transactions[(transactions['거래일'] >= week_start) & 
+                                (transactions['거래일'] <= week_end)]
         
         weekly_realized_pl = 0
         
-        # 주간 거래 처리
+        # 거래 처리
         for _, tx in week_txs.iterrows():
             ticker = tx['종목코드']
             qty = tx['수량']
@@ -506,7 +481,7 @@ def calculate_fifo(transactions, close_prices):
                 
                 avg_purchase_price = total_cost / sold_qty if sold_qty > 0 else 0
                 
-                # 기존 FIFO 처리
+                # FIFO 처리
                 while remaining_qty > 0 and holdings[ticker]:
                     lot = holdings[ticker][0]
                     qty_to_sell = min(remaining_qty, lot['qty'])
@@ -522,7 +497,6 @@ def calculate_fifo(transactions, close_prices):
                 realized_pl = proceeds - cost_basis
                 weekly_realized_pl += realized_pl
                 
-                # 매도 기록 저장
                 realized_trades.append({
                     'date': tx['거래일'],
                     'ticker': ticker,
@@ -547,12 +521,12 @@ def calculate_fifo(transactions, close_prices):
         
         cumulative_realized_pl += weekly_realized_pl
         
-        # 이전 주 보유 종목 (NEW/OUT 판단용)
+        # 이전 주 보유 종목
         prev_tickers = set()
         if week_idx > 0:
             prev_tickers = {h['ticker'] for h in weekly_snapshots[week_idx - 1]['holdings']}
         
-        # 현재 보유 종목 현황
+        # 주말 스냅샷 생성
         current_holdings = []
         total_unrealized_pl = 0
         
@@ -561,12 +535,12 @@ def calculate_fifo(transactions, close_prices):
             if total_qty > 0:
                 avg_cost = sum(lot['qty'] * lot['price'] for lot in lots) / total_qty
                 
-                # 주말 기준 종가 가져오기
+                # 금요일 기준 종가
                 close_price = None
                 if ticker in close_prices:
                     price_dict = close_prices[ticker]
                     for price_date, price_value in sorted(price_dict.items(), reverse=True):
-                        if price_date.date() <= week_end_date.date():
+                        if price_date.date() <= friday.date():
                             close_price = price_value
                             break
                 
@@ -576,7 +550,6 @@ def calculate_fifo(transactions, close_prices):
                 unrealized_pl = (close_price - avg_cost) * total_qty
                 total_unrealized_pl += unrealized_pl
                 
-                # 이전 주와 비교하여 NEW 판단
                 is_new = ticker not in prev_tickers
                 
                 current_holdings.append({
@@ -588,13 +561,13 @@ def calculate_fifo(transactions, close_prices):
                     'return_rate': ((close_price - avg_cost) / avg_cost * 100) if avg_cost > 0 else 0,
                     'is_new': is_new,
                     'is_out': False,
-                    'first_buy_date': first_buy_dates.get(ticker, week_end_date)
+                    'first_buy_date': first_buy_dates.get(ticker, friday)
                 })
         
         current_holdings.sort(key=lambda x: x['avg_cost'] * x['qty'], reverse=True)
         
         weekly_snapshots.append({
-            'date': week_end_date,
+            'date': friday,
             'holdings': current_holdings,
             'weekly_realized_pl': weekly_realized_pl,
             'cumulative_realized_pl': cumulative_realized_pl,
@@ -602,7 +575,7 @@ def calculate_fifo(transactions, close_prices):
             'total_pl': cumulative_realized_pl + total_unrealized_pl
         })
     
-    # OUT 배지 설정 (현재 주에 있었지만 다음 주에 없는 경우)
+    # OUT 배지 설정
     for idx in range(len(weekly_snapshots) - 1):
         current_tickers = {h['ticker'] for h in weekly_snapshots[idx]['holdings']}
         next_tickers = {h['ticker'] for h in weekly_snapshots[idx + 1]['holdings']}
@@ -622,9 +595,9 @@ try:
     trade_dates = df['거래일'].unique()
     
     with st.spinner('종가 데이터를 가져오는 중...'):
-        close_prices = get_closing_prices(tickers, trade_dates)
+        close_prices = get_closing_prices(tickers, min(trade_dates), datetime.now())
     
-    snapshots, realized_trades, first_buy_dates = calculate_fifo(df, close_prices)
+    snapshots, realized_trades, first_buy_dates = calculate_fifo_weekly(df, close_prices)
 
     # 이번 주 현황 추가 (최신 종가 반영)
     if snapshots:
@@ -632,11 +605,14 @@ try:
         today = datetime.now()
         
         # 이번 주 금요일 계산
-        days_until_friday = (4 - today.weekday()) % 7
-        this_friday = today + timedelta(days=days_until_friday)
+        monday = today - timedelta(days=today.weekday())
+        this_friday = monday + timedelta(days=4)
         
         # 마지막 스냅샷이 이번 주가 아니면 이번 주 현황 추가
-        if last_snapshot['date'].date() < (today - timedelta(days=7)).date():
+        last_iso_year, last_iso_week, _ = last_snapshot['date'].isocalendar()
+        this_iso_year, this_iso_week, _ = today.isocalendar()
+        
+        if (last_iso_year, last_iso_week) != (this_iso_year, this_iso_week):
             # 오늘의 최신 종가 가져오기
             today_tickers = [h['ticker'] for h in last_snapshot['holdings']]
             today_prices = {}
@@ -717,11 +693,14 @@ try:
         two_months_ago = datetime.now() - timedelta(days=60)
         recent_snapshots = [s for s in snapshots if s['date'] >= two_months_ago]
         
+        # 스냅샷 개수 표시 (디버깅용)
+        st.info(f"📊 총 {len(snapshots)}개 주차 | 최근 2개월: {len(recent_snapshots)}개 주차")
+        
         # 결과 표시
         for idx, snapshot in enumerate(reversed(recent_snapshots)):
             is_current_week = idx == 0
             
-            # 주차 표시 (예: 2024년 12월 4주차)
+            # 주차 표시
             year = snapshot['date'].year
             month = snapshot['date'].month
             week_of_month = (snapshot['date'].day - 1) // 7 + 1
@@ -818,7 +797,6 @@ try:
     with tab2:
         # 누적 실현손익 계산
         total_realized_pl = sum(t['realized_pl'] for t in realized_trades) if realized_trades else 0
-        total_pl_class = 'pl-positive' if total_realized_pl >= 0 else 'pl-negative'
         
         # 제목과 누적 실현손익 표시
         st.markdown(f"""
