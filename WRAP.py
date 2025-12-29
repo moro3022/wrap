@@ -693,9 +693,6 @@ try:
         two_months_ago = datetime.now() - timedelta(days=60)
         recent_snapshots = [s for s in snapshots if s['date'] >= two_months_ago]
         
-        # 스냅샷 개수 표시 (디버깅용)
-        st.info(f"📊 총 {len(snapshots)}개 주차 | 최근 2개월: {len(recent_snapshots)}개 주차")
-        
         # 결과 표시
         for idx, snapshot in enumerate(reversed(recent_snapshots)):
             is_current_week = idx == 0
