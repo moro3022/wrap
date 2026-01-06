@@ -392,7 +392,7 @@ def load_data():
     df['거래일'] = pd.to_datetime(df['거래일'])
     
     # 투자금액 읽기 (M1 셀)
-    investment_df = conn.read(worksheet="WRAP", usecols=[12], nrows=1, header=None)
+    investment_df = conn.read(worksheet="WRAP", usecols=[10], nrows=1, header=None)
     investment_amount = float(investment_df.iloc[0, 0]) if not investment_df.empty else 0
     
     return df.sort_values('거래일'), investment_amount
