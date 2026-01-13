@@ -940,7 +940,13 @@ try:
                         monthly_data[month_key] = {'new_tickers': [], 'out_tickers': []}
 
                     first_buy = holding.get('first_buy_date', snapshot['date'])
-                    holding_days = (actual_out_date - first_buy).days  
+                    actual_sell_date = actual_out_date
+                    for t in realized_trades:
+                        if t['ticker'] == holding['ticker'] and first_buy <= t['date'] <= actual_out_date:
+                            if t['date'] > actual_sell_date or actual_sell_date == actual_out_date:
+                                actual_sell_date = t['date']
+
+                    holding_days = (actual_sell_date - first_buy).days
                     
                     # 해당 종목의 실현손익과 매도 정보 합산
                     ticker_realized_pl = 0
