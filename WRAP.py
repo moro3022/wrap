@@ -948,7 +948,7 @@ try:
                     ticker_total_proceeds = 0
                     
                     for t in realized_trades:
-                        if t['ticker'] == holding['ticker'] and t['date'].strftime('%Y-%m') == month_key:
+                        if t['ticker'] == holding['ticker'] and first_buy <= t['date'] <= actual_out_date:
                             ticker_realized_pl += t['realized_pl']
                             if t.get('type') != 'dividend':
                                 cost_basis = t['avg_cost'] * t['qty']
