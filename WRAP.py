@@ -932,9 +932,15 @@ try:
 
                 # 매도 종목
                 if holding.get('is_out', False):
-                    first_buy = holding.get('first_buy_date', snapshot['date'])
                     out_date = holding.get('out_date', snapshot['date'])
-                    holding_days = (out_date - first_buy).days
+                    actual_out_date = out_date + timedelta(days=7)
+                    month_key = actual_out_date.strftime('%Y-%m')
+
+                    if month_key not in monthly_data:
+                        monthly_data[month_key] = {'new_tickers': [], 'out_tickers': []}
+
+                    first_buy = holding.get('first_buy_date', snapshot['date'])
+                    holding_days = (actual_out_date - first_buy).days  
                     
                     # 해당 종목의 실현손익과 매도 정보 합산
                     ticker_realized_pl = 0
