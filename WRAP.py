@@ -946,7 +946,7 @@ try:
                             if t['date'] > actual_sell_date or actual_sell_date == actual_out_date:
                                 actual_sell_date = t['date']
 
-                    holding_days = (actual_sell_date - first_buy).days
+                    holding_days = (actual_sell_date - first_buy).days + 1
                     
                     # 해당 종목의 실현손익과 매도 정보 합산
                     ticker_realized_pl = 0
