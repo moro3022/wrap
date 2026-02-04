@@ -820,40 +820,58 @@ try:
             
             st.markdown(html_content, unsafe_allow_html=True)
 
-        # 차트 데이터 준비
         if recent_snapshots:
-            chart_data = []
-            for snapshot in recent_snapshots:
-                chart_data.append({
-                    'date': snapshot['date'],
-                    'total_pl': snapshot['total_pl']
-                })
-            
             # 날짜순으로 정렬 (오래된 것부터)
-            chart_data.sort(key=lambda x: x['date'])
+            sorted_snapshots = sorted(recent_snapshots, key=lambda x: x['date'])
             
-            # DataFrame 생성
-            chart_df = pd.DataFrame(chart_data)
-            chart_df['date_str'] = chart_df['date'].dt.strftime('%m/%d')
+            dates = [s['date'].strftime('%m/%d') for s in sorted_snapshots]
+            total_pls = [s['total_pl'] for s in sorted_snapshots]
             
-            # Streamlit 차트 표시
-            st.markdown("""
-            <div style="background: white; border-radius: 16px; padding: 2rem; margin-bottom: 2rem; 
-                        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);">
-                <h3 style="margin: 0 0 1.5rem 0; font-size: 1.5rem; font-weight: 700; color: #1f2937;">
-                    📊 주간 총 손익 추이
-                </h3>
-            </div>
-            """, unsafe_allow_html=True)
+            # Plotly 차트 생성
+            import plotly.graph_objects as go
             
-            # 라인 차트
-            st.line_chart(
-                chart_df,
-                x='date_str',
-                y='total_pl',
-                color='#2E4365',
-                height=400
+            fig = go.Figure()
+            
+            fig.add_trace(go.Scatter(
+                x=dates,
+                y=total_pls,
+                mode='lines+markers',
+                name='총 손익',
+                line=dict(color='#2E4365', width=3),
+                marker=dict(size=8, color='#2E4365'),
+                hovertemplate='<b>%{x}</b><br>총 손익: $%{y:,.2f}<extra></extra>'
+            ))
+            
+            # 0선 추가
+            fig.add_hline(y=0, line_dash="dash", line_color="gray", opacity=0.5)
+            
+            fig.update_layout(
+                title={
+                    'text': '📊 주간 총 손익 추이',
+                    'font': {'size': 24, 'family': 'Pretendard', 'weight': 700, 'color': '#1f2937'}
+                },
+                xaxis_title='날짜',
+                yaxis_title='총 손익 ($)',
+                hovermode='x unified',
+                plot_bgcolor='white',
+                paper_bgcolor='white',
+                height=450,
+                margin=dict(l=20, r=20, t=60, b=20),
+                xaxis=dict(
+                    showgrid=True,
+                    gridcolor='#f1f5f9',
+                    zeroline=False
+                ),
+                yaxis=dict(
+                    showgrid=True,
+                    gridcolor='#f1f5f9',
+                    zeroline=True,
+                    zerolinecolor='gray',
+                    zerolinewidth=1
+                )
             )
+            
+            st.plotly_chart(fig, use_container_width=True)
             
             st.markdown("<div style='margin-bottom: 2rem;'></div>", unsafe_allow_html=True)
 
