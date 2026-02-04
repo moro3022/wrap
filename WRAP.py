@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import yfinance as yf
+import plotly.graph_objects as go
 from streamlit_gsheets import GSheetsConnection
 from datetime import datetime, timedelta
 from collections import defaultdict
