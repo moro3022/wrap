@@ -712,6 +712,7 @@ try:
     tab1, tab2, tab3 = st.tabs(["주간 현황", "실현손익 내역", "신규/매도 항목"])
 
     with tab1:
+        
         # 최근 2달치만 필터링
         two_months_ago = datetime.now() - timedelta(days=60)
         recent_snapshots = [s for s in snapshots if s['date'] >= two_months_ago]
@@ -818,6 +819,43 @@ try:
             html_content += '</div></div>'
             
             st.markdown(html_content, unsafe_allow_html=True)
+
+        # 차트 데이터 준비
+        if recent_snapshots:
+            chart_data = []
+            for snapshot in recent_snapshots:
+                chart_data.append({
+                    'date': snapshot['date'],
+                    'total_pl': snapshot['total_pl']
+                })
+            
+            # 날짜순으로 정렬 (오래된 것부터)
+            chart_data.sort(key=lambda x: x['date'])
+            
+            # DataFrame 생성
+            chart_df = pd.DataFrame(chart_data)
+            chart_df['date_str'] = chart_df['date'].dt.strftime('%m/%d')
+            
+            # Streamlit 차트 표시
+            st.markdown("""
+            <div style="background: white; border-radius: 16px; padding: 2rem; margin-bottom: 2rem; 
+                        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.1), 0 2px 4px -1px rgba(0,0,0,0.06);">
+                <h3 style="margin: 0 0 1.5rem 0; font-size: 1.5rem; font-weight: 700; color: #1f2937;">
+                    📊 주간 총 손익 추이
+                </h3>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            # 라인 차트
+            st.line_chart(
+                chart_df,
+                x='date_str',
+                y='total_pl',
+                color='#2E4365',
+                height=400
+            )
+            
+            st.markdown("<div style='margin-bottom: 2rem;'></div>", unsafe_allow_html=True)
 
     with tab2:
         # 누적 실현손익 계산
