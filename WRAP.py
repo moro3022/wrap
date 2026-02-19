@@ -542,6 +542,16 @@ def calculate_fifo_weekly(transactions, close_prices):
                     'dividend_price': price,
                     'realized_pl': dividend_amount
                 })
+            elif tx['구분'] == '수수료':
+                fee_amount = tx['거래금액']
+                weekly_realized_pl += fee_amount  # 수수료는 보통 음수값
+
+                realized_trades.append({
+                    'date': tx['거래일'],
+                    'ticker': tx['종목코드'],
+                    'type': 'fee',
+                    'realized_pl': fee_amount
+                })
         
         cumulative_realized_pl += weekly_realized_pl
         
@@ -930,6 +940,12 @@ try:
                         html_content += f'<td class="text-center">{int(trade["qty"])}</td>'
                         html_content += '<td class="text-center">배당</td>'
                         html_content += f'<td class="text-right">${trade["dividend_price"]:.2f}</td>'
+                        html_content += f'<td class="text-right {pl_class}">${trade["realized_pl"]:,.2f}</td>'
+                        html_content += '<td class="text-right">-</td>'
+                    elif trade.get('type') == 'fee':
+                        html_content += '<td class="text-center">-</td>'
+                        html_content += '<td class="text-center">-</td>'
+                        html_content += '<td class="text-center">-</td>'
                         html_content += f'<td class="text-right {pl_class}">${trade["realized_pl"]:,.2f}</td>'
                         html_content += '<td class="text-right">-</td>'
                     else:
