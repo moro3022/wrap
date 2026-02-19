@@ -715,7 +715,7 @@ try:
     with tab1:
         
         # 최근 2달치만 필터링
-        two_months_ago = datetime.now() - timedelta(days=60)
+        two_months_ago = datetime.now() - timedelta(days=90)
         recent_snapshots = [s for s in snapshots if s['date'] >= two_months_ago]
         
         # 결과 표시
