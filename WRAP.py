@@ -396,7 +396,7 @@ def load_data():
     investment_df = conn.read(worksheet="WRAP", usecols=[10], nrows=1, header=None)
     investment_amount = float(investment_df.iloc[0, 0]) if not investment_df.empty else 0
     
-    return df.sort_values('거래일'), investment_amount
+    return df.sort_values('거래일', kind='stable'), investment_amount
 
 # 종가 데이터 가져오기
 @st.cache_data
