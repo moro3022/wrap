@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
+import calendar
 from streamlit_gsheets import GSheetsConnection
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -396,7 +397,25 @@ def load_data():
     investment_df = conn.read(worksheet="WRAP", usecols=[10], nrows=1, header=None)
     investment_amount = float(investment_df.iloc[0, 0]) if not investment_df.empty else 0
     
-    return df.sort_values('거래일', kind='stable'), investment_amount
+    return df.sort_values('거래일'), investment_amount
+
+# 마지막 영업일 계산
+@st.cache_data
+def get_last_business_days(tickers, year_months):
+    """yfinance 기반 월말 마지막 NYSE 영업일 계산"""
+    ticker = tickers[0]
+    stock = yf.Ticker(ticker)
+    result = {}
+    for ym in year_months:
+        year, month = int(ym.split('-')[0]), int(ym.split('-')[1])
+        last_day = calendar.monthrange(year, month)[1]
+        hist = stock.history(
+            start=f"{year}-{month:02d}-01",
+            end=f"{year}-{month:02d}-{last_day + 1}"
+        )
+        if not hist.empty:
+            result[ym] = hist.index[-1].date()
+    return result
 
 # 종가 데이터 가져오기
 @st.cache_data
@@ -412,17 +431,20 @@ def get_closing_prices(tickers, start_date, end_date):
             prices[ticker] = {}
     return prices
 
+# 선입선출 방식으로 매매손익 계산 (주간 기준)
 def calculate_fifo_weekly(transactions, close_prices):
-    """총평균법으로 매매손익 계산"""
+    """모든 거래를 처리하되, 스냅샷은 주간 마지막 영업일에만 생성"""
     
-    holdings = defaultdict(lambda: {'qty': 0, 'total_cost': 0})
+    holdings = defaultdict(list)
     cumulative_realized_pl = 0
     realized_trades = []
     first_buy_dates = {}
     
+    # 모든 거래일 가져오기
     all_trade_dates = sorted(transactions['거래일'].unique())
     
-    weeks = {}
+    # 거래일을 ISO 주차별로 그룹화
+    weeks = {}  # {(year, week): [dates]}
     for date in all_trade_dates:
         iso_year, iso_week, _ = date.isocalendar()
         week_key = (iso_year, iso_week)
@@ -430,9 +452,12 @@ def calculate_fifo_weekly(transactions, close_prices):
             weeks[week_key] = []
         weeks[week_key].append(date)
     
+    # 마지막 거래일과 오늘 사이의 주차도 추가
     if all_trade_dates:
         last_trade_date = all_trade_dates[-1]
         today = datetime.now()
+        
+        # 마지막 거래일부터 오늘까지의 주차 생성
         current_date = last_trade_date + timedelta(days=7)
         while current_date < today:
             iso_year, iso_week, _ = current_date.isocalendar()
@@ -441,16 +466,20 @@ def calculate_fifo_weekly(transactions, close_prices):
                 weeks[week_key] = []
             current_date += timedelta(days=7)
     
+    # 각 주의 마지막 날짜 찾기 (금요일 기준)
     weekly_snapshots = []
     sorted_weeks = sorted(weeks.keys())
     
     for week_idx, week_key in enumerate(sorted_weeks):
         week_dates = weeks[week_key] if weeks[week_key] else []
         
+        # 해당 주의 금요일 계산
         if week_dates:
             first_date_of_week = min(week_dates)
         else:
+            # 거래가 없는 주: week_key로부터 금요일 계산
             iso_year, iso_week = week_key
+            # ISO week의 월요일 찾기
             jan_4 = datetime(iso_year, 1, 4)
             week_one_monday = jan_4 - timedelta(days=jan_4.weekday())
             first_date_of_week = week_one_monday + timedelta(weeks=iso_week-1)
@@ -458,11 +487,16 @@ def calculate_fifo_weekly(transactions, close_prices):
         monday = first_date_of_week - timedelta(days=first_date_of_week.weekday())
         friday = monday + timedelta(days=4)
         
-        week_txs = transactions[(transactions['거래일'] >= monday) & 
-                                (transactions['거래일'] <= friday)]
+        # 해당 주의 모든 거래 처리
+        week_start = monday
+        week_end = friday
+        
+        week_txs = transactions[(transactions['거래일'] >= week_start) & 
+                                (transactions['거래일'] <= week_end)]
         
         weekly_realized_pl = 0
         
+        # 거래 처리
         for _, tx in week_txs.iterrows():
             ticker = tx['종목코드']
             qty = tx['수량']
@@ -471,41 +505,54 @@ def calculate_fifo_weekly(transactions, close_prices):
             if tx['구분'] == '매수':
                 if ticker not in first_buy_dates:
                     first_buy_dates[ticker] = tx['거래일']
-                holdings[ticker]['qty'] += qty
-                holdings[ticker]['total_cost'] += qty * price
+                holdings[ticker].append({'qty': qty, 'price': price})
                 
             elif tx['구분'] == '매도':
-                holding = holdings[ticker]
+                remaining_qty = qty
+                cost_basis = 0
+                sold_qty = qty
                 
-                if holding['qty'] > 0:
-                    # 총평균법: 현재 평균단가로 원가 계산
-                    avg_cost = holding['total_cost'] / holding['qty']
-                    cost_basis = avg_cost * qty
-                    proceeds = qty * price
-                    realized_pl = proceeds - cost_basis
+                # FIFO로 평균단가 계산
+                total_cost = 0
+                temp_remaining = qty
+                for lot in holdings[ticker]:
+                    if temp_remaining <= 0:
+                        break
+                    take_qty = min(temp_remaining, lot['qty'])
+                    total_cost += take_qty * lot['price']
+                    temp_remaining -= take_qty
+                
+                avg_purchase_price = total_cost / sold_qty if sold_qty > 0 else 0
+                
+                # FIFO 처리
+                while remaining_qty > 0 and holdings[ticker]:
+                    lot = holdings[ticker][0]
+                    qty_to_sell = min(remaining_qty, lot['qty'])
                     
-                    weekly_realized_pl += realized_pl
+                    cost_basis += qty_to_sell * lot['price']
+                    remaining_qty -= qty_to_sell
+                    lot['qty'] -= qty_to_sell
                     
-                    # 보유량과 총비용 차감
-                    holding['qty'] -= qty
-                    holding['total_cost'] -= cost_basis
-                    
-                    if holding['qty'] <= 0:
-                        holding['qty'] = 0
-                        holding['total_cost'] = 0
-                    
-                    realized_trades.append({
-                        'date': tx['거래일'],
-                        'ticker': ticker,
-                        'qty': int(qty),
-                        'avg_cost': avg_cost,
-                        'sell_price': price,
-                        'realized_pl': realized_pl
-                    })
+                    if lot['qty'] == 0:
+                        holdings[ticker].pop(0)
+                
+                proceeds = sold_qty * price
+                realized_pl = proceeds - cost_basis
+                weekly_realized_pl += realized_pl
+                
+                realized_trades.append({
+                    'date': tx['거래일'],
+                    'ticker': ticker,
+                    'qty': sold_qty,
+                    'avg_cost': avg_purchase_price,
+                    'sell_price': price,
+                    'realized_pl': realized_pl
+                })
 
             elif tx['구분'] == '배당':
                 dividend_amount = tx['거래금액']
                 weekly_realized_pl += dividend_amount
+                
                 realized_trades.append({
                     'date': tx['거래일'],
                     'ticker': ticker,
@@ -514,10 +561,10 @@ def calculate_fifo_weekly(transactions, close_prices):
                     'dividend_price': price,
                     'realized_pl': dividend_amount
                 })
-
             elif tx['구분'] == '수수료':
                 fee_amount = tx['거래금액']
-                weekly_realized_pl += fee_amount
+                weekly_realized_pl += fee_amount  # 수수료는 보통 음수값
+
                 realized_trades.append({
                     'date': tx['거래일'],
                     'ticker': tx['종목코드'],
@@ -527,18 +574,21 @@ def calculate_fifo_weekly(transactions, close_prices):
         
         cumulative_realized_pl += weekly_realized_pl
         
+        # 이전 주 보유 종목
         prev_tickers = set()
         if week_idx > 0:
             prev_tickers = {h['ticker'] for h in weekly_snapshots[week_idx - 1]['holdings']}
         
+        # 주말 스냅샷 생성
         current_holdings = []
         total_unrealized_pl = 0
         
-        for ticker, holding in holdings.items():
-            total_qty = holding['qty']
+        for ticker, lots in holdings.items():
+            total_qty = sum(lot['qty'] for lot in lots)
             if total_qty > 0:
-                avg_cost = holding['total_cost'] / total_qty
+                avg_cost = sum(lot['qty'] * lot['price'] for lot in lots) / total_qty
                 
+                # 금요일 기준 종가
                 close_price = None
                 if ticker in close_prices:
                     price_dict = close_prices[ticker]
@@ -601,6 +651,67 @@ try:
         close_prices = get_closing_prices(tickers, min(trade_dates), datetime.now())
     
     snapshots, realized_trades, first_buy_dates = calculate_fifo_weekly(df, close_prices)
+
+    # 월말 마지막 영업일 스냅샷 생성
+    # 스냅샷이 커버하는 연월 목록 추출
+    covered_months = sorted(set(s['date'].strftime('%Y-%m') for s in snapshots))
+    last_biz_days = get_last_business_days(tickers, covered_months)
+
+    monthly_snapshots = []
+    for ym, last_biz_date in last_biz_days.items():
+        # 해당 월말 영업일이 금요일이면 주간 스냅샷과 중복 → 건너뜀
+        if last_biz_date.weekday() == 4:
+            continue
+
+        # 월말 영업일 직전까지의 주간 스냅샷 중 가장 최근 것 기준으로 보유 종목 구성
+        base_snapshot = None
+        for s in snapshots:
+            if s['date'].date() <= last_biz_date:
+                base_snapshot = s
+        if base_snapshot is None:
+            continue
+
+        # 월말 종가 수집
+        eom_prices = {}
+        for holding in base_snapshot['holdings']:
+            ticker = holding['ticker']
+            if ticker in close_prices:
+                price_dict = close_prices[ticker]
+                for price_date, price_value in sorted(price_dict.items(), reverse=True):
+                    if price_date.date() <= last_biz_date:
+                        eom_prices[ticker] = price_value
+                        break
+
+        # 월말 보유 종목 재계산
+        eom_holdings = []
+        total_unrealized_pl = 0
+        for holding in base_snapshot['holdings']:
+            ticker = holding['ticker']
+            close_price = eom_prices.get(ticker, holding['avg_cost'])
+            unrealized_pl = (close_price - holding['avg_cost']) * holding['qty']
+            total_unrealized_pl += unrealized_pl
+            eom_holdings.append({
+                'ticker': ticker,
+                'qty': holding['qty'],
+                'avg_cost': holding['avg_cost'],
+                'close_price': close_price,
+                'unrealized_pl': unrealized_pl,
+                'return_rate': ((close_price - holding['avg_cost']) / holding['avg_cost'] * 100) if holding['avg_cost'] > 0 else 0,
+                'is_new': False,
+                'is_out': False
+            })
+
+        eom_holdings.sort(key=lambda x: x['avg_cost'] * x['qty'], reverse=True)
+
+        monthly_snapshots.append({
+            'date': datetime.combine(last_biz_date, datetime.min.time()),
+            'holdings': eom_holdings,
+            'weekly_realized_pl': base_snapshot['weekly_realized_pl'],
+            'cumulative_realized_pl': base_snapshot['cumulative_realized_pl'],
+            'total_unrealized_pl': total_unrealized_pl,
+            'total_pl': base_snapshot['cumulative_realized_pl'] + total_unrealized_pl,
+            'is_month_end': True  # 월말 카드 구분용 플래그
+        })
 
     # 이번 주 현황 추가 (최신 종가 반영)
     if snapshots:
@@ -696,9 +807,17 @@ try:
         # 최근 2달치만 필터링
         two_months_ago = datetime.now() - timedelta(days=90)
         recent_snapshots = [s for s in snapshots if s['date'] >= two_months_ago]
+        recent_monthly = [s for s in monthly_snapshots if s['date'] >= two_months_ago]
+
+        # 주간 + 월말 합치고 날짜 역순 정렬 (차트용 recent_snapshots는 그대로 유지)
+        all_snapshots_display = sorted(
+            recent_snapshots + recent_monthly,
+            key=lambda x: (x['date'], x.get('is_month_end', False)),
+            reverse=True
+        )
         
         # 결과 표시
-        for idx, snapshot in enumerate(reversed(recent_snapshots)):
+        for idx, snapshot in enumerate(all_snapshots_display):
             is_current_week = idx == 0
             
             # 주차 표시
@@ -707,8 +826,8 @@ try:
             week_of_month = (snapshot['date'].day - 1) // 7 + 1
             
             # 현재 주인 경우 실제 날짜 표시
-            if is_current_week:
-                date_str = f"{snapshot['date'].strftime('%y')}년 {month}월 {week_of_month}주 ({snapshot['date'].strftime('%m/%d')})"
+            if snapshot.get('is_month_end', False):
+                date_str = f"{snapshot['date'].strftime('%y')}년 {month}월 말 ({snapshot['date'].strftime('%m/%d')})"
             else:
                 date_str = f"{snapshot['date'].strftime('%y')}년 {month}월 {week_of_month}주 ({snapshot['date'].strftime('%m/%d')})"
             
@@ -858,11 +977,18 @@ try:
     with tab2:
         # 누적 실현손익 계산
         total_realized_pl = sum(t['realized_pl'] for t in realized_trades) if realized_trades else 0
-        
+        realized_2026 = sum(t['realized_pl'] for t in realized_trades if t['date'].year == 2026) if realized_trades else 0        
+
         # 제목과 누적 실현손익 표시
         st.markdown(f"""
         <div style="display: flex; justify-content: space-between; align-items: center;">
-            <h3 style="margin: 0; font-size: 1.5rem; font-weight: 700; color: #1f2937; margin-left: 30px;">실현손익 내역</h3>
+            <div style="display: flex; gap: 3rem; align-items: center; margin-left: 30px;">
+                <h3 style="margin: 0; font-size: 1.5rem; font-weight: 700; color: #1f2937;">실현손익 내역</h3>
+                <div>
+                    <div style="font-size: 0.95rem; color: #64748b; margin-bottom: 0.25rem;">2026년 실현손익</div>
+                    <div style="font-size: 1.5rem; font-weight: 700; color: {'#3A866A' if realized_2026 >= 0 else '#C54E4A'};">${realized_2026:,.2f}</div>
+                </div>
+            </div>
             <div style="text-align: right;">
                 <div style="font-size: 0.95rem; color: #64748b; margin-bottom: 0.25rem; margin-right: 30px;">누적 실현손익</div>
                 <div style="font-size: 1.5rem; font-weight: 700; margin-right: 30px; color: {'#3A866A' if total_realized_pl >= 0 else '#C54E4A'};">${total_realized_pl:,.2f}</div>
