@@ -660,7 +660,13 @@ try:
     last_biz_days = get_last_business_days(tickers, covered_months)
 
     monthly_snapshots = []
+    
+    today = datetime.now().date()
+    current_ym = datetime.now().strftime('%Y-%m')
     for ym, last_biz_date in last_biz_days.items():
+        if ym == current_ym:  # 현재 진행 중인 달은 건너뜀
+            continue
+
         # 해당 월말 영업일이 금요일이면 주간 스냅샷과 중복 → 건너뜀
         if last_biz_date.weekday() == 4:
             continue
