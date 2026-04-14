@@ -409,9 +409,11 @@ def get_last_business_days(tickers, year_months):
     for ym in year_months:
         year, month = int(ym.split('-')[0]), int(ym.split('-')[1])
         last_day = calendar.monthrange(year, month)[1]
+        next_month = month + 1 if month < 12 else 1
+        next_year = year if month < 12 else year + 1
         hist = stock.history(
             start=f"{year}-{month:02d}-01",
-            end=f"{year}-{month:02d}-{last_day + 1}"
+            end=f"{next_year}-{next_month:02d}-01"
         )
         if not hist.empty:
             result[ym] = hist.index[-1].date()
