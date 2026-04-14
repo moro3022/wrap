@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
-import calendar
 from streamlit_gsheets import GSheetsConnection
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -399,26 +398,6 @@ def load_data():
     
     return df.sort_values('거래일'), investment_amount
 
-# 마지막 영업일 계산
-@st.cache_data
-def get_last_business_days(tickers, year_months):
-    """yfinance 기반 월말 마지막 NYSE 영업일 계산"""
-    ticker = tickers[0]
-    stock = yf.Ticker(ticker)
-    result = {}
-    for ym in year_months:
-        year, month = int(ym.split('-')[0]), int(ym.split('-')[1])
-        last_day = calendar.monthrange(year, month)[1]
-        next_month = month + 1 if month < 12 else 1
-        next_year = year if month < 12 else year + 1
-        hist = stock.history(
-            start=f"{year}-{month:02d}-01",
-            end=f"{next_year}-{next_month:02d}-01"
-        )
-        if not hist.empty:
-            result[ym] = hist.index[-1].date()
-    return result
-
 # 종가 데이터 가져오기
 @st.cache_data
 def get_closing_prices(tickers, start_date, end_date):
@@ -654,73 +633,6 @@ try:
     
     snapshots, realized_trades, first_buy_dates = calculate_fifo_weekly(df, close_prices)
 
-    # 월말 마지막 영업일 스냅샷 생성
-    # 스냅샷이 커버하는 연월 목록 추출
-    covered_months = sorted(set(s['date'].strftime('%Y-%m') for s in snapshots))
-    last_biz_days = get_last_business_days(tickers, covered_months)
-
-    monthly_snapshots = []
-    
-    today = datetime.now().date()
-    current_ym = datetime.now().strftime('%Y-%m')
-    for ym, last_biz_date in last_biz_days.items():
-        if ym == current_ym:  # 현재 진행 중인 달은 건너뜀
-            continue
-
-        # 해당 월말 영업일이 금요일이면 주간 스냅샷과 중복 → 건너뜀
-        if last_biz_date.weekday() == 4:
-            continue
-
-        # 월말 영업일 직전까지의 주간 스냅샷 중 가장 최근 것 기준으로 보유 종목 구성
-        base_snapshot = None
-        for s in snapshots:
-            if s['date'].date() <= last_biz_date:
-                base_snapshot = s
-        if base_snapshot is None:
-            continue
-
-        # 월말 종가 수집
-        eom_prices = {}
-        for holding in base_snapshot['holdings']:
-            ticker = holding['ticker']
-            if ticker in close_prices:
-                price_dict = close_prices[ticker]
-                for price_date, price_value in sorted(price_dict.items(), reverse=True):
-                    if price_date.date() <= last_biz_date:
-                        eom_prices[ticker] = price_value
-                        break
-
-        # 월말 보유 종목 재계산
-        eom_holdings = []
-        total_unrealized_pl = 0
-        for holding in base_snapshot['holdings']:
-            ticker = holding['ticker']
-            close_price = eom_prices.get(ticker, holding['avg_cost'])
-            unrealized_pl = (close_price - holding['avg_cost']) * holding['qty']
-            total_unrealized_pl += unrealized_pl
-            eom_holdings.append({
-                'ticker': ticker,
-                'qty': holding['qty'],
-                'avg_cost': holding['avg_cost'],
-                'close_price': close_price,
-                'unrealized_pl': unrealized_pl,
-                'return_rate': ((close_price - holding['avg_cost']) / holding['avg_cost'] * 100) if holding['avg_cost'] > 0 else 0,
-                'is_new': False,
-                'is_out': False
-            })
-
-        eom_holdings.sort(key=lambda x: x['avg_cost'] * x['qty'], reverse=True)
-
-        monthly_snapshots.append({
-            'date': datetime.combine(last_biz_date, datetime.min.time()),
-            'holdings': eom_holdings,
-            'weekly_realized_pl': base_snapshot['weekly_realized_pl'],
-            'cumulative_realized_pl': base_snapshot['cumulative_realized_pl'],
-            'total_unrealized_pl': total_unrealized_pl,
-            'total_pl': base_snapshot['cumulative_realized_pl'] + total_unrealized_pl,
-            'is_month_end': True  # 월말 카드 구분용 플래그
-        })
-
     # 이번 주 현황 추가 (최신 종가 반영)
     if snapshots:
         last_snapshot = snapshots[-1]
@@ -815,17 +727,9 @@ try:
         # 최근 2달치만 필터링
         two_months_ago = datetime.now() - timedelta(days=90)
         recent_snapshots = [s for s in snapshots if s['date'] >= two_months_ago]
-        recent_monthly = [s for s in monthly_snapshots if s['date'] >= two_months_ago]
-
-        # 주간 + 월말 합치고 날짜 역순 정렬 (차트용 recent_snapshots는 그대로 유지)
-        all_snapshots_display = sorted(
-            recent_snapshots + recent_monthly,
-            key=lambda x: (x['date'], x.get('is_month_end', False)),
-            reverse=True
-        )
         
         # 결과 표시
-        for idx, snapshot in enumerate(all_snapshots_display):
+        for idx, snapshot in enumerate(reversed(recent_snapshots)):
             is_current_week = idx == 0
             
             # 주차 표시
@@ -834,8 +738,8 @@ try:
             week_of_month = (snapshot['date'].day - 1) // 7 + 1
             
             # 현재 주인 경우 실제 날짜 표시
-            if snapshot.get('is_month_end', False):
-                date_str = f"{snapshot['date'].strftime('%y')}년 {month}월 말 ({snapshot['date'].strftime('%m/%d')})"
+            if is_current_week:
+                date_str = f"{snapshot['date'].strftime('%y')}년 {month}월 {week_of_month}주 ({snapshot['date'].strftime('%m/%d')})"
             else:
                 date_str = f"{snapshot['date'].strftime('%y')}년 {month}월 {week_of_month}주 ({snapshot['date'].strftime('%m/%d')})"
             
@@ -985,18 +889,11 @@ try:
     with tab2:
         # 누적 실현손익 계산
         total_realized_pl = sum(t['realized_pl'] for t in realized_trades) if realized_trades else 0
-        realized_2026 = sum(t['realized_pl'] for t in realized_trades if t['date'].year == 2026) if realized_trades else 0        
-
+        
         # 제목과 누적 실현손익 표시
         st.markdown(f"""
         <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div style="display: flex; gap: 3rem; align-items: center; margin-left: 30px;">
-                <h3 style="margin: 0; font-size: 1.5rem; font-weight: 700; color: #1f2937;">실현손익 내역</h3>
-                <div>
-                    <div style="font-size: 0.95rem; color: #64748b; margin-bottom: 0.25rem;">2026년 실현손익</div>
-                    <div style="font-size: 1.5rem; font-weight: 700; color: {'#3A866A' if realized_2026 >= 0 else '#C54E4A'};">${realized_2026:,.2f}</div>
-                </div>
-            </div>
+            <h3 style="margin: 0; font-size: 1.5rem; font-weight: 700; color: #1f2937; margin-left: 30px;">실현손익 내역</h3>
             <div style="text-align: right;">
                 <div style="font-size: 0.95rem; color: #64748b; margin-bottom: 0.25rem; margin-right: 30px;">누적 실현손익</div>
                 <div style="font-size: 1.5rem; font-weight: 700; margin-right: 30px; color: {'#3A866A' if total_realized_pl >= 0 else '#C54E4A'};">${total_realized_pl:,.2f}</div>
