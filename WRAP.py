@@ -989,16 +989,16 @@ try:
         # 제목과 누적 실현손익 표시
         st.markdown(f"""
         <div style="display: flex; justify-content: space-between; align-items: center;">
-            <div style="display: flex; gap: 3rem; align-items: center; margin-left: 30px;">
-                <h3 style="margin: 0; font-size: 1.5rem; font-weight: 700; color: #1f2937;">실현손익 내역</h3>
-                <div>
+            <h3 style="margin: 0; font-size: 1.5rem; font-weight: 700; color: #1f2937; margin-left: 30px;">실현손익 내역</h3>
+            <div style="display: flex; gap: 3rem; align-items: center; margin-right: 30px;">
+                <div style="text-align: right;">
                     <div style="font-size: 0.95rem; color: #64748b; margin-bottom: 0.25rem;">2026년 실현손익</div>
                     <div style="font-size: 1.5rem; font-weight: 700; color: {'#3A866A' if realized_2026 >= 0 else '#C54E4A'};">${realized_2026:,.2f}</div>
                 </div>
-            </div>
-            <div style="text-align: right;">
-                <div style="font-size: 0.95rem; color: #64748b; margin-bottom: 0.25rem; margin-right: 30px;">누적 실현손익</div>
-                <div style="font-size: 1.5rem; font-weight: 700; margin-right: 30px; color: {'#3A866A' if total_realized_pl >= 0 else '#C54E4A'};">${total_realized_pl:,.2f}</div>
+                <div style="text-align: right;">
+                    <div style="font-size: 0.95rem; color: #64748b; margin-bottom: 0.25rem;">누적 실현손익</div>
+                    <div style="font-size: 1.5rem; font-weight: 700; color: {'#3A866A' if total_realized_pl >= 0 else '#C54E4A'};">${total_realized_pl:,.2f}</div>
+                </div>
             </div>
         </div>
         """, unsafe_allow_html=True)
