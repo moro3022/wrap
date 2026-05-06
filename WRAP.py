@@ -921,7 +921,10 @@ try:
 
         if recent_snapshots:
             # 날짜순으로 정렬 (오래된 것부터)
-            sorted_snapshots = sorted(recent_snapshots, key=lambda x: x['date'])
+            sorted_snapshots = sorted(
+                [s for s in recent_snapshots if not s.get('is_month_end', False)],
+                key=lambda x: x['date']
+            )
             
             dates = [s['date'].strftime('%m/%d') for s in sorted_snapshots]
             total_pls = [s['total_pl'] for s in sorted_snapshots]
