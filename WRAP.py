@@ -685,13 +685,20 @@ def calculate_fifo_weekly(transactions, close_prices, month_end_dates=None):
     # OUT 배지 설정
     weekly_snapshots.sort(key=lambda x: x['date'])
     for idx in range(len(weekly_snapshots) - 1):
-        current_tickers = {h['ticker'] for h in weekly_snapshots[idx]['holdings']}
         next_tickers = {h['ticker'] for h in weekly_snapshots[idx + 1]['holdings']}
         
         for holding in weekly_snapshots[idx]['holdings']:
             if holding['ticker'] not in next_tickers:
                 holding['is_out'] = True
                 holding['out_date'] = weekly_snapshots[idx]['date']
+                
+                # 매도가격을 현재가로 교체
+                for t in realized_trades:
+                    if t['ticker'] == holding['ticker'] and t.get('type') not in ('dividend', 'fee'):
+                        holding['close_price'] = t['sell_price']
+                        holding['unrealized_pl'] = (t['sell_price'] - holding['avg_cost']) * holding['qty']
+                        holding['return_rate'] = ((t['sell_price'] - holding['avg_cost']) / holding['avg_cost'] * 100) if holding['avg_cost'] > 0 else 0
+                        break
     
     return weekly_snapshots, realized_trades, first_buy_dates
 
