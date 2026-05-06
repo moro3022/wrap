@@ -692,13 +692,19 @@ def calculate_fifo_weekly(transactions, close_prices, month_end_dates=None):
                 holding['is_out'] = True
                 holding['out_date'] = weekly_snapshots[idx]['date']
                 
-                # 매도가격을 현재가로 교체
-                for t in realized_trades:
-                    if t['ticker'] == holding['ticker'] and t.get('type') not in ('dividend', 'fee'):
-                        holding['close_price'] = t['sell_price']
-                        holding['unrealized_pl'] = (t['sell_price'] - holding['avg_cost']) * holding['qty']
-                        holding['return_rate'] = ((t['sell_price'] - holding['avg_cost']) / holding['avg_cost'] * 100) if holding['avg_cost'] > 0 else 0
-                        break
+                snap_date = weekly_snapshots[idx]['date']
+                sell_trades = [
+                    t for t in realized_trades
+                    if t['ticker'] == holding['ticker']
+                    and t.get('type') not in ('dividend', 'fee')
+                    and t['date'] <= snap_date
+                ]
+                if sell_trades:
+                    latest = sell_trades[-1]
+                    holding['close_price'] = latest['sell_price']
+                    holding['unrealized_pl'] = (latest['sell_price'] - holding['avg_cost']) * holding['qty']
+                    holding['return_rate'] = ((latest['sell_price'] - holding['avg_cost']) / holding['avg_cost'] * 100) if holding['avg_cost'] > 0 else 0
+                    break
     
     return weekly_snapshots, realized_trades, first_buy_dates
 
