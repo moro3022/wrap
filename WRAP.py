@@ -441,6 +441,7 @@ def calculate_fifo_weekly(transactions, close_prices):
     cumulative_realized_pl = 0
     realized_trades = []
     first_buy_dates = {}
+    month_end_set = set(month_end_dates) if month_end_dates else set()
     
     # 모든 거래일 가져오기
     all_trade_dates = sorted(transactions['거래일'].unique())
@@ -627,8 +628,56 @@ def calculate_fifo_weekly(transactions, close_prices):
             'weekly_realized_pl': weekly_realized_pl,
             'cumulative_realized_pl': cumulative_realized_pl,
             'total_unrealized_pl': total_unrealized_pl,
-            'total_pl': cumulative_realized_pl + total_unrealized_pl
+            'total_pl': cumulative_realized_pl + total_unrealized_pl,
+            'is_month_end': friday.date() in month_end_set
         })
+
+        # 월말 영업일이 이번 주(월~금) 안에 있고, 금요일이 아닌 경우 별도 스냅샷 생성
+        for eom_date in month_end_set:
+            if week_start.date() <= eom_date <= friday.date() and eom_date != friday.date():
+                eom_holdings = []
+                eom_unrealized_pl = 0
+
+                for ticker, lots in holdings.items():
+                    total_qty = sum(lot['qty'] for lot in lots)
+                    if total_qty > 0:
+                        avg_cost = sum(lot['qty'] * lot['price'] for lot in lots) / total_qty
+
+                        close_price = None
+                        if ticker in close_prices:
+                            for price_date, price_value in sorted(close_prices[ticker].items(), reverse=True):
+                                if price_date.date() <= eom_date:
+                                    close_price = price_value
+                                    break
+                        if close_price is None:
+                            close_price = avg_cost
+
+                        unrealized_pl = (close_price - avg_cost) * total_qty
+                        eom_unrealized_pl += unrealized_pl
+
+                        eom_holdings.append({
+                            'ticker': ticker,
+                            'qty': int(total_qty),
+                            'avg_cost': avg_cost,
+                            'close_price': close_price,
+                            'unrealized_pl': unrealized_pl,
+                            'return_rate': ((close_price - avg_cost) / avg_cost * 100) if avg_cost > 0 else 0,
+                            'is_new': False,
+                            'is_out': False,
+                            'first_buy_date': first_buy_dates.get(ticker, friday)
+                        })
+
+                eom_holdings.sort(key=lambda x: x['avg_cost'] * x['qty'], reverse=True)
+
+                weekly_snapshots.append({
+                    'date': datetime.combine(eom_date, datetime.min.time()),
+                    'holdings': eom_holdings,
+                    'weekly_realized_pl': weekly_realized_pl,
+                    'cumulative_realized_pl': cumulative_realized_pl,
+                    'total_unrealized_pl': eom_unrealized_pl,
+                    'total_pl': cumulative_realized_pl + eom_unrealized_pl,
+                    'is_month_end': True
+                })
     
     # OUT 배지 설정
     for idx in range(len(weekly_snapshots) - 1):
@@ -652,6 +701,10 @@ try:
     with st.spinner('종가 데이터를 가져오는 중...'):
         close_prices = get_closing_prices(tickers, min(trade_dates), datetime.now())
     
+    covered_months = sorted(set(df['거래일'].dt.strftime('%Y-%m').unique()))
+    last_biz_days = get_last_business_days(tickers, covered_months)
+    month_end_dates = list(last_biz_days.values())
+
     snapshots, realized_trades, first_buy_dates = calculate_fifo_weekly(df, close_prices)
 
     # 월말 마지막 영업일 스냅샷 생성
@@ -818,7 +871,7 @@ try:
 
         # 주간 + 월말 합치고 날짜 역순 정렬 (차트용 recent_snapshots는 그대로 유지)
         all_snapshots_display = sorted(
-            recent_snapshots + recent_monthly,
+            recent_snapshots,
             key=lambda x: (x['date'], x.get('is_month_end', False)),
             reverse=True
         )
