@@ -434,13 +434,14 @@ def get_closing_prices(tickers, start_date, end_date):
     return prices
 
 # 선입선출 방식으로 매매손익 계산 (주간 기준)
-def calculate_fifo_weekly(transactions, close_prices):
+def calculate_fifo_weekly(transactions, close_prices, month_end_dates=None):
     """모든 거래를 처리하되, 스냅샷은 주간 마지막 영업일에만 생성"""
     
     holdings = defaultdict(list)
     cumulative_realized_pl = 0
     realized_trades = []
     first_buy_dates = {}
+    month_end_set = set(month_end_dates) if month_end_dates else set()
     
     # 모든 거래일 가져오기
     all_trade_dates = sorted(transactions['거래일'].unique())
@@ -578,8 +579,9 @@ def calculate_fifo_weekly(transactions, close_prices):
         
         # 이전 주 보유 종목
         prev_tickers = set()
-        if week_idx > 0:
-            prev_tickers = {h['ticker'] for h in weekly_snapshots[week_idx - 1]['holdings']}
+        friday_snapshots = [s for s in weekly_snapshots if not s.get('is_month_end', False)]
+        if friday_snapshots:
+            prev_tickers = {h['ticker'] for h in friday_snapshots[-1]['holdings']}
         
         # 주말 스냅샷 생성
         current_holdings = []
@@ -618,7 +620,9 @@ def calculate_fifo_weekly(transactions, close_prices):
                     'is_out': False,
                     'first_buy_date': first_buy_dates.get(ticker, friday)
                 })
-        
+    
+        is_friday_month_end = friday.date() in month_end_set
+
         current_holdings.sort(key=lambda x: x['avg_cost'] * x['qty'], reverse=True)
         
         weekly_snapshots.append({
@@ -627,10 +631,59 @@ def calculate_fifo_weekly(transactions, close_prices):
             'weekly_realized_pl': weekly_realized_pl,
             'cumulative_realized_pl': cumulative_realized_pl,
             'total_unrealized_pl': total_unrealized_pl,
-            'total_pl': cumulative_realized_pl + total_unrealized_pl
+            'total_pl': cumulative_realized_pl + total_unrealized_pl,
+            'is_month_end': is_friday_month_end
         })
-    
+
+        # 월말 영업일이 이번 주(월~금) 사이에 있고, 금요일이 아닌 경우 별도 스냅샷 생성
+        for eom_date in month_end_set:
+            if week_start.date() <= eom_date < friday.date():
+                eom_holdings = []
+                eom_unrealized_pl = 0
+
+                for ticker, lots in holdings.items():
+                    total_qty = sum(lot['qty'] for lot in lots)
+                    if total_qty > 0:
+                        avg_cost = sum(lot['qty'] * lot['price'] for lot in lots) / total_qty
+
+                        close_price = None
+                        if ticker in close_prices:
+                            for price_date, price_value in sorted(close_prices[ticker].items(), reverse=True):
+                                if price_date.date() <= eom_date:
+                                    close_price = price_value
+                                    break
+                        if close_price is None:
+                            close_price = avg_cost
+
+                        unrealized_pl = (close_price - avg_cost) * total_qty
+                        eom_unrealized_pl += unrealized_pl
+
+                        eom_holdings.append({
+                            'ticker': ticker,
+                            'qty': int(total_qty),
+                            'avg_cost': avg_cost,
+                            'close_price': close_price,
+                            'unrealized_pl': unrealized_pl,
+                            'return_rate': ((close_price - avg_cost) / avg_cost * 100) if avg_cost > 0 else 0,
+                            'is_new': False,
+                            'is_out': False,
+                            'first_buy_date': first_buy_dates.get(ticker, friday)
+                        })
+
+                eom_holdings.sort(key=lambda x: x['avg_cost'] * x['qty'], reverse=True)
+
+                weekly_snapshots.append({
+                    'date': datetime.combine(eom_date, datetime.min.time()),
+                    'holdings': eom_holdings,
+                    'weekly_realized_pl': weekly_realized_pl,
+                    'cumulative_realized_pl': cumulative_realized_pl,
+                    'total_unrealized_pl': eom_unrealized_pl,
+                    'total_pl': cumulative_realized_pl + eom_unrealized_pl,
+                    'is_month_end': True
+                })
+
     # OUT 배지 설정
+    weekly_snapshots.sort(key=lambda x: x['date'])
     for idx in range(len(weekly_snapshots) - 1):
         current_tickers = {h['ticker'] for h in weekly_snapshots[idx]['holdings']}
         next_tickers = {h['ticker'] for h in weekly_snapshots[idx + 1]['holdings']}
@@ -649,76 +702,17 @@ try:
     tickers = df['종목코드'].unique().tolist()
     trade_dates = df['거래일'].unique()
     
+    covered_months = sorted(set(pd.to_datetime(df['거래일']).dt.strftime('%Y-%m').unique()))
+    current_ym = datetime.now().strftime('%Y-%m')
+    covered_months_past = [m for m in covered_months if m < current_ym]
+
     with st.spinner('종가 데이터를 가져오는 중...'):
         close_prices = get_closing_prices(tickers, min(trade_dates), datetime.now())
+
+    last_biz_days = get_last_business_days(tickers, covered_months_past)
+    month_end_dates = list(last_biz_days.values())
     
-    snapshots, realized_trades, first_buy_dates = calculate_fifo_weekly(df, close_prices)
-
-    # 월말 마지막 영업일 스냅샷 생성
-    # 스냅샷이 커버하는 연월 목록 추출
-    covered_months = sorted(set(s['date'].strftime('%Y-%m') for s in snapshots))
-    last_biz_days = get_last_business_days(tickers, covered_months)
-
-    monthly_snapshots = []
-    today = datetime.now().date()
-    current_ym = datetime.now().strftime('%Y-%m')
-    for ym, last_biz_date in last_biz_days.items():
-        if ym == current_ym:  # 현재 진행 중인 달은 건너뜀
-            continue
-        
-        # 해당 월말 영업일이 금요일이면 주간 스냅샷과 중복 → 건너뜀
-        if last_biz_date.weekday() == 4:
-            continue
-
-        # 월말 영업일 직전까지의 주간 스냅샷 중 가장 최근 것 기준으로 보유 종목 구성
-        base_snapshot = None
-        for s in snapshots:
-            if s['date'].date() <= last_biz_date:
-                base_snapshot = s
-        if base_snapshot is None:
-            continue
-
-        # 월말 종가 수집
-        eom_prices = {}
-        for holding in base_snapshot['holdings']:
-            ticker = holding['ticker']
-            if ticker in close_prices:
-                price_dict = close_prices[ticker]
-                for price_date, price_value in sorted(price_dict.items(), reverse=True):
-                    if price_date.date() <= last_biz_date:
-                        eom_prices[ticker] = price_value
-                        break
-
-        # 월말 보유 종목 재계산
-        eom_holdings = []
-        total_unrealized_pl = 0
-        for holding in base_snapshot['holdings']:
-            ticker = holding['ticker']
-            close_price = eom_prices.get(ticker, holding['avg_cost'])
-            unrealized_pl = (close_price - holding['avg_cost']) * holding['qty']
-            total_unrealized_pl += unrealized_pl
-            eom_holdings.append({
-                'ticker': ticker,
-                'qty': holding['qty'],
-                'avg_cost': holding['avg_cost'],
-                'close_price': close_price,
-                'unrealized_pl': unrealized_pl,
-                'return_rate': ((close_price - holding['avg_cost']) / holding['avg_cost'] * 100) if holding['avg_cost'] > 0 else 0,
-                'is_new': False,
-                'is_out': False
-            })
-
-        eom_holdings.sort(key=lambda x: x['avg_cost'] * x['qty'], reverse=True)
-
-        monthly_snapshots.append({
-            'date': datetime.combine(last_biz_date, datetime.min.time()),
-            'holdings': eom_holdings,
-            'weekly_realized_pl': base_snapshot['weekly_realized_pl'],
-            'cumulative_realized_pl': base_snapshot['cumulative_realized_pl'],
-            'total_unrealized_pl': total_unrealized_pl,
-            'total_pl': base_snapshot['cumulative_realized_pl'] + total_unrealized_pl,
-            'is_month_end': True  # 월말 카드 구분용 플래그
-        })
+    snapshots, realized_trades, first_buy_dates = calculate_fifo_weekly(df, close_prices, month_end_dates)
 
     # 이번 주 현황 추가 (최신 종가 반영)
     if snapshots:
@@ -814,11 +808,10 @@ try:
         # 최근 2달치만 필터링
         two_months_ago = datetime.now() - timedelta(days=90)
         recent_snapshots = [s for s in snapshots if s['date'] >= two_months_ago]
-        recent_monthly = [s for s in monthly_snapshots if s['date'] >= two_months_ago]
 
         # 주간 + 월말 합치고 날짜 역순 정렬 (차트용 recent_snapshots는 그대로 유지)
         all_snapshots_display = sorted(
-            recent_snapshots + recent_monthly,
+            recent_snapshots,
             key=lambda x: (x['date'], x.get('is_month_end', False)),
             reverse=True
         )
