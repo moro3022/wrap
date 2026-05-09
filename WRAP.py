@@ -437,7 +437,7 @@ def get_closing_prices(tickers, start_date, end_date):
 def calculate_fifo_weekly(transactions, close_prices, month_end_dates=None):
     """모든 거래를 처리하되, 스냅샷은 주간 마지막 영업일에만 생성"""
     
-    holdings = defaultdict(list)
+    holdings = defaultdict(lambda: {'qty': 0, 'avg_cost': 0})
     cumulative_realized_pl = 0
     realized_trades = []
     first_buy_dates = {}
@@ -504,45 +504,29 @@ def calculate_fifo_weekly(transactions, close_prices, month_end_dates=None):
             ticker = tx['종목코드']
             qty = tx['수량']
             price = tx['단가']
-            
+                        
             if tx['구분'] == '매수':
                 if ticker not in first_buy_dates:
                     first_buy_dates[ticker] = tx['거래일']
-                holdings[ticker].append({'qty': qty, 'price': price})
-                
+                h = holdings[ticker]
+                total_cost = h['qty'] * h['avg_cost'] + qty * price
+                h['qty'] += qty
+                h['avg_cost'] = total_cost / h['qty']
+                            
             elif tx['구분'] == '매도':
-                remaining_qty = qty
-                cost_basis = 0
+                h = holdings[ticker]
                 sold_qty = qty
+                avg_purchase_price = h['avg_cost']
                 
-                # FIFO로 평균단가 계산
-                total_cost = 0
-                temp_remaining = qty
-                for lot in holdings[ticker]:
-                    if temp_remaining <= 0:
-                        break
-                    take_qty = min(temp_remaining, lot['qty'])
-                    total_cost += take_qty * lot['price']
-                    temp_remaining -= take_qty
-                
-                avg_purchase_price = total_cost / sold_qty if sold_qty > 0 else 0
-                
-                # FIFO 처리
-                while remaining_qty > 0 and holdings[ticker]:
-                    lot = holdings[ticker][0]
-                    qty_to_sell = min(remaining_qty, lot['qty'])
-                    
-                    cost_basis += qty_to_sell * lot['price']
-                    remaining_qty -= qty_to_sell
-                    lot['qty'] -= qty_to_sell
-                    
-                    if lot['qty'] == 0:
-                        holdings[ticker].pop(0)
-                
+                cost_basis = sold_qty * avg_purchase_price
                 proceeds = sold_qty * price
                 realized_pl = proceeds - cost_basis
-                weekly_realized_pl += realized_pl
                 
+                h['qty'] -= sold_qty
+                if h['qty'] <= 0:
+                    holdings.pop(ticker, None)
+                
+                weekly_realized_pl += realized_pl
                 realized_trades.append({
                     'date': tx['거래일'],
                     'ticker': ticker,
@@ -587,10 +571,10 @@ def calculate_fifo_weekly(transactions, close_prices, month_end_dates=None):
         current_holdings = []
         total_unrealized_pl = 0
         
-        for ticker, lots in holdings.items():
-            total_qty = sum(lot['qty'] for lot in lots)
+        for ticker, h in holdings.items():
+            total_qty = h['qty']
             if total_qty > 0:
-                avg_cost = sum(lot['qty'] * lot['price'] for lot in lots) / total_qty
+                avg_cost = h['avg_cost']
                 
                 # 금요일 기준 종가
                 close_price = None
@@ -641,10 +625,10 @@ def calculate_fifo_weekly(transactions, close_prices, month_end_dates=None):
                 eom_holdings = []
                 eom_unrealized_pl = 0
 
-                for ticker, lots in holdings.items():
-                    total_qty = sum(lot['qty'] for lot in lots)
+                for ticker, h in holdings.items():
+                    total_qty = h['qty']
                     if total_qty > 0:
-                        avg_cost = sum(lot['qty'] * lot['price'] for lot in lots) / total_qty
+                        avg_cost = h['avg_cost']
 
                         close_price = None
                         if ticker in close_prices:
