@@ -423,21 +423,26 @@ def get_last_business_days(tickers, year_months):
 @st.cache_data
 def get_closing_prices(tickers, start_date, end_date):
     prices = {}
-    for ticker in tickers:
-        try:
-            stock = yf.Ticker(ticker)
-            hist = stock.history(start=start_date - timedelta(days=5), end=end_date + timedelta(days=1))
-            prices[ticker] = hist['Close'].to_dict()
-        except Exception as e:
-            st.warning(f"{ticker} 종가 데이터를 가져올 수 없습니다: {e}")
-            prices[ticker] = {}
+    try:
+        raw = yf.download(tickers, start=start_date - timedelta(days=5), end=end_date + timedelta(days=1), auto_adjust=True, progress=False)
+        
+        if len(tickers) == 1:
+            ticker = tickers[0]
+            prices[ticker] = raw['Close'].to_dict()
+        else:
+            for ticker in tickers:
+                if ticker in raw['Close'].columns:
+                    prices[ticker] = raw['Close'][ticker].dropna().to_dict()
+    except Exception as e:
+        st.warning(f"종가 데이터를 가져올 수 없습니다: {e}")
+    
     return prices
 
 # 선입선출 방식으로 매매손익 계산 (주간 기준)
 def calculate_fifo_weekly(transactions, close_prices, month_end_dates=None):
     """모든 거래를 처리하되, 스냅샷은 주간 마지막 영업일에만 생성"""
     
-    holdings = defaultdict(lambda: {'qty': 0, 'avg_cost': 0})
+    holdings = defaultdict(list)
     cumulative_realized_pl = 0
     realized_trades = []
     first_buy_dates = {}
@@ -504,29 +509,45 @@ def calculate_fifo_weekly(transactions, close_prices, month_end_dates=None):
             ticker = tx['종목코드']
             qty = tx['수량']
             price = tx['단가']
-                        
+            
             if tx['구분'] == '매수':
                 if ticker not in first_buy_dates:
                     first_buy_dates[ticker] = tx['거래일']
-                h = holdings[ticker]
-                total_cost = h['qty'] * h['avg_cost'] + qty * price
-                h['qty'] += qty
-                h['avg_cost'] = total_cost / h['qty']
-                            
-            elif tx['구분'] == '매도':
-                h = holdings[ticker]
-                sold_qty = qty
-                avg_purchase_price = h['avg_cost']
+                holdings[ticker].append({'qty': qty, 'price': price})
                 
-                cost_basis = sold_qty * avg_purchase_price
+            elif tx['구분'] == '매도':
+                remaining_qty = qty
+                cost_basis = 0
+                sold_qty = qty
+                
+                # FIFO로 평균단가 계산
+                total_cost = 0
+                temp_remaining = qty
+                for lot in holdings[ticker]:
+                    if temp_remaining <= 0:
+                        break
+                    take_qty = min(temp_remaining, lot['qty'])
+                    total_cost += take_qty * lot['price']
+                    temp_remaining -= take_qty
+                
+                avg_purchase_price = total_cost / sold_qty if sold_qty > 0 else 0
+                
+                # FIFO 처리
+                while remaining_qty > 0 and holdings[ticker]:
+                    lot = holdings[ticker][0]
+                    qty_to_sell = min(remaining_qty, lot['qty'])
+                    
+                    cost_basis += qty_to_sell * lot['price']
+                    remaining_qty -= qty_to_sell
+                    lot['qty'] -= qty_to_sell
+                    
+                    if lot['qty'] == 0:
+                        holdings[ticker].pop(0)
+                
                 proceeds = sold_qty * price
                 realized_pl = proceeds - cost_basis
-                
-                h['qty'] -= sold_qty
-                if h['qty'] <= 0:
-                    holdings.pop(ticker, None)
-                
                 weekly_realized_pl += realized_pl
+                
                 realized_trades.append({
                     'date': tx['거래일'],
                     'ticker': ticker,
@@ -571,10 +592,10 @@ def calculate_fifo_weekly(transactions, close_prices, month_end_dates=None):
         current_holdings = []
         total_unrealized_pl = 0
         
-        for ticker, h in holdings.items():
-            total_qty = h['qty']
+        for ticker, lots in holdings.items():
+            total_qty = sum(lot['qty'] for lot in lots)
             if total_qty > 0:
-                avg_cost = h['avg_cost']
+                avg_cost = sum(lot['qty'] * lot['price'] for lot in lots) / total_qty
                 
                 # 금요일 기준 종가
                 close_price = None
@@ -625,10 +646,10 @@ def calculate_fifo_weekly(transactions, close_prices, month_end_dates=None):
                 eom_holdings = []
                 eom_unrealized_pl = 0
 
-                for ticker, h in holdings.items():
-                    total_qty = h['qty']
+                for ticker, lots in holdings.items():
+                    total_qty = sum(lot['qty'] for lot in lots)
                     if total_qty > 0:
-                        avg_cost = h['avg_cost']
+                        avg_cost = sum(lot['qty'] * lot['price'] for lot in lots) / total_qty
 
                         close_price = None
                         if ticker in close_prices:
@@ -964,7 +985,7 @@ try:
     with tab2:
         # 누적 실현손익 계산
         total_realized_pl = sum(t['realized_pl'] for t in realized_trades) if realized_trades else 0
-        realized_2026 = sum(t['realized_pl'] for t in realized_trades if t['date'].year == 2026) if realized_trades else 0        
+        realized_2026 = sum(t['realized_pl'] for t in realized_trades if t['date'].year == 2026 and t.get('type') not in ('dividend', 'fee'))     
 
         # 제목과 누적 실현손익 표시
         st.markdown(f"""
