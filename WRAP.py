@@ -612,7 +612,7 @@ def calculate_fifo_weekly(transactions, close_prices, month_end_dates=None):
     
         is_friday_month_end = friday.date() in month_end_set
 
-        current_holdings.sort(key=lambda x: x['avg_cost'] * x['qty'], reverse=True)
+        current_holdings.sort(key=lambda x: x['close_price'] * x['qty'], reverse=True)
         
         weekly_snapshots.append({
             'date': friday,
@@ -659,7 +659,7 @@ def calculate_fifo_weekly(transactions, close_prices, month_end_dates=None):
                             'first_buy_date': first_buy_dates.get(ticker, friday)
                         })
 
-                eom_holdings.sort(key=lambda x: x['avg_cost'] * x['qty'], reverse=True)
+                eom_holdings.sort(key=lambda x: x['close_price'] * x['qty'], reverse=True)
 
                 weekly_snapshots.append({
                     'date': datetime.combine(eom_date, datetime.min.time()),
@@ -752,7 +752,7 @@ try:
                     'is_out': False
                 })
             
-            today_holdings.sort(key=lambda x: x['avg_cost'] * x['qty'], reverse=True)
+            today_holdings.sort(key=lambda x: x['close_price'] * x['qty'], reverse=True)
 
             snapshots.append({
                 'date': today,  # 오늘 날짜로 변경
