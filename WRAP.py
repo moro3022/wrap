@@ -691,7 +691,7 @@ try:
     tickers = df['종목코드'].unique().tolist()
     trade_dates = df['거래일'].unique()
     
-        covered_months = sorted(set(pd.to_datetime(df['거래일'], errors='coerce').dt.strftime('%Y-%m').dropna().unique()))
+    covered_months = sorted(set(pd.to_datetime(df['거래일'], errors='coerce').dt.strftime('%Y-%m').dropna().unique()))
     current_ym = datetime.now().strftime('%Y-%m')
     covered_months_past = [m for m in covered_months if m < current_ym]
 
